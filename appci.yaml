@@ -1,0 +1,64 @@
+# appci configuration. Anything left out uses the defaults in appci/config.py.
+# Paths are relative to the AOSP root unless absolute. Every setting is described in
+# docs/admin-guide.md (section "Configuration").
+
+targets:
+  device:                            # build, lint, unit tests, docs, Sonar
+    lunch: aosp_tangorpro_car-trunk_staging-userdebug
+    out_dir: out
+  emulator:                          # device tests and on-device coverage
+    lunch: sdk_car_x86_64-trunk_staging-userdebug
+    out_dir: out_appci_emu
+    coverage: true
+
+stages:
+  default: [preupload, build, risk, lint, checkstyle, ktlint, detekt, unit_test, device_test, coverage, docs, sonar]
+  lint:       {gate: {max_new_errors: 0}}   # new_* gates count only lines the change touches
+  checkstyle: {gate: {max_new_errors: 0}}
+  ktlint:     {gate: {max_new_errors: 0}}
+  detekt:     {gate: {max_new_errors: 0}}
+  unit_test:  {gate: {max_failed: 0}}
+  device_test:
+    mode: emulator                   # or device: a connected device ($ANDROID_SERIAL)
+    gate: {max_failed: 0}
+  coverage:
+    gate: {min_line: null, min_new_line: 50}
+  sonar:
+    project_key_prefix: "aaos-"
+    pull_request_analysis: false     # true needs SonarQube Developer Edition or higher
+  # deploy:                          # prebuilt delivery on release tags
+  #   repo: https://gitlab.example.com/prebuilts/apps.git
+  #   branch: main
+  #   path: "{name}"                 # folder per app in that repository
+  #   mode: mr                       # mr or push
+  #   certificate: platform          # or presigned: true
+  #   author_name: CI Bot
+  #   author_email: ci-bot@example.com
+
+discovery:
+  scan_roots: [packages/apps/Car]
+
+# One section per platform; selected with APPCI_PLATFORM (CI) or --platform (local). A section can
+# override anything above (targets, java_home, stages, apps).
+platforms:
+  tangorpro:
+    manifest: {url: https://github.com/a17-tangorpro-aaos/manifest.git,
+               branch: android-17.0.0_r1-tangorpro, file: default.xml}
+    # emulator:
+    #   image: {url: https://artifactory.example.com/artifactory/aaos-images/tangorpro/latest/, pattern: "RELEASE_*.zip"}
+
+# Where CI jobs clone appci from (your GitLab path and release tag).
+# gitlab: {appci_project: tools/aosp-app-ci, appci_version: v1.0.0}
+
+# Without internet access: internal copies of the pinned tools (`bin/appci tools` lists them).
+# tools:
+#   detekt: {url: https://artifactory.example.com/artifactory/generic/appci/detekt-cli-1.23.8-all.jar}
+# downloads:
+#   wheel_base_url: https://artifactory.example.com/artifactory/generic/appci/wheels
+
+apps:
+  - path: packages/apps/Car/Settings
+    enabled: true
+    stages:
+      coverage:
+        gate: {min_line: null}

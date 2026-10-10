@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Entry point: works from any directory; needs python3 (3.8+) with PyYAML.
+here="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+exec env PYTHONPATH="$here${PYTHONPATH:+:$PYTHONPATH}" python3 -m appci "$@"

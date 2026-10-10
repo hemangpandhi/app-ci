@@ -1,0 +1,48 @@
+# Detekt configuration for AOSP platform code; applied on top of detekt's default config
+# (--build-upon-default-config), so only deviations are listed here.
+build:
+  maxIssues: 0                 # appci applies its own gates; exit code 2 is not treated as failure
+
+config:
+  validation: true
+  warningsAsErrors: false
+
+style:
+  MaxLineLength:
+    active: true
+    maxLineLength: 100         # AOSP Kotlin style (matches prebuilts/ktlint/.editorconfig)
+    excludeCommentStatements: true
+  WildcardImport:
+    active: true
+  MagicNumber:
+    active: true
+    excludes: ['**/test/**', '**/tests/**', '**/androidTest/**']
+    ignorePropertyDeclaration: true
+    ignoreCompanionObjectPropertyDeclaration: true
+    ignoreAnnotation: true
+    ignoreEnums: true
+  ReturnCount:
+    max: 3
+  UnusedPrivateMember:
+    active: true
+
+complexity:
+  LongMethod:
+    threshold: 80
+    excludes: ['**/test/**', '**/tests/**']
+  LongParameterList:
+    functionThreshold: 8
+    constructorThreshold: 10
+  TooManyFunctions:
+    thresholdInFiles: 25
+    thresholdInClasses: 25
+    ignorePrivate: true
+    ignoreOverridden: true
+
+naming:
+  FunctionNaming:
+    excludes: ['**/test/**', '**/tests/**']   # backtick test names
+
+exceptions:
+  TooGenericExceptionCaught:
+    excludes: ['**/test/**', '**/tests/**']

@@ -1,0 +1,12 @@
+# Self-test of the appci repository: unit tests and a check that the committed pipeline template
+# matches the generator. Needs no AOSP tree; runs on any Docker runner.
+selftest:
+  image: python:3.12
+  before_script:
+    - pip install --quiet pyyaml
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_PIPELINE_SOURCE == "push"
+  script:
+    - python3 -m unittest discover -s tests -v
+    - bin/appci gitlab | diff -u ci/gitlab/app-pipeline.yml -

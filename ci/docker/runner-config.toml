@@ -1,0 +1,37 @@
+# Example /etc/gitlab-runner/config.toml for an AOSP build machine (docker executor).
+# One [[runners]] entry per platform image on this machine; register them with
+# ci/docker/setup-runner.sh, which writes entries like these.
+#
+# Layout on the host (any large disk; must not be the root filesystem):
+#   /srv/appci/                 -> mounted at /appci in every job
+#     <platform>/               workspace: .repo (seeded once from the image), sources, out/
+#     .tools/                   pinned third-party tools (detekt, Dokka, sonar-scanner, ...)
+#
+# Docker's own storage (images, containers) also belongs on a large disk: set "data-root" in
+# /etc/docker/daemon.json. Snap Docker ignores data-root (the snap passes its own); bind-mount a
+# large-disk directory over /var/snap/docker/common/var-lib-docker instead (docs/admin-guide.md).
+
+concurrent = 4                        # jobs on this machine across all runners
+check_interval = 3
+
+[[runners]]
+  name = "appci-tangorpro-buildhost01"
+  url = "https://gitlab.example.com"
+  token = "glrt-REPLACE"              # runner authentication token (tags are set in GitLab)
+  executor = "docker"
+  limit = 1                           # one job at a time per platform tree
+  # Proxy for every job (git, repo sync, appci downloads); leave out without a proxy.
+  # environment = ["http_proxy=http://proxy.example.com:8080", "https_proxy=http://proxy.example.com:8080",
+  #                "no_proxy=localhost,127.0.0.1,.example.com"]
+  [runners.docker]
+    image = "ubuntu:20.04"            # fallback only; jobs set image: $APPCI_IMAGE
+    pull_policy = ["if-not-present"]  # use the platform image already on this machine
+    allowed_pull_policies = ["if-not-present", "always"]
+    volumes = ["/srv/appci:/appci"]   # persistent workspaces + tools cache
+    devices = ["/dev/kvm"]            # emulator for device tests (needs KVM on the host)
+    shm_size = 8589934592             # 8 GB /dev/shm (Soong, emulator)
+    disable_cache = true              # appci keeps its own caches on /appci
+    privileged = false
+
+# Device tests can share the build runner (same tags + "-kvm") or use a separate entry
+# tagged appci-<platform>-kvm on a machine with KVM.
