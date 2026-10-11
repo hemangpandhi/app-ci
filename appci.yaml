@@ -53,7 +53,11 @@ platforms:
 # Without internet access: internal copies of the pinned tools (`bin/appci tools` lists them).
 # tools:
 #   detekt: {url: https://artifactory.example.com/artifactory/generic/appci/detekt-cli-1.23.8-all.jar}
-# downloads:
+# Behind a proxy that re-signs TLS with a certificate the image does not trust, downloads fail
+# with CERTIFICATE_VERIFY_FAILED; verify_tls: false skips that check. Every download is still
+# checked against its pinned SHA-256, so a tampered file is refused either way.
+downloads:
+  verify_tls: false
 #   wheel_base_url: https://artifactory.example.com/artifactory/generic/appci/wheels
 
 apps:
