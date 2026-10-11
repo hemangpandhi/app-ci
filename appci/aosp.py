@@ -55,6 +55,10 @@ class AospTree:
         # value makes Soong discard its analysis and re-run it.
         out = str(t.get("out_dir") or "out")
         env: Dict[str, Optional[str]] = {"OUT_DIR": None if out == "out" else out}
+        # Soong writes out/soong/module_bp_java_deps.json (module types, sources, dependencies;
+        # appci's discovery reads it) only with this set. Set for every appci build of the target
+        # so Soong's recorded environment stays the same and analysis is not redone each time.
+        env["SOONG_COLLECT_JAVA_DEPS"] = "true"
         env.update({k: str(v) for k, v in (t.get("env") or {}).items()})
         for name in self.cfg.get("build_env_secrets") or []:
             value = util.secret(name)

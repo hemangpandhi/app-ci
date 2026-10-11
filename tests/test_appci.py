@@ -704,6 +704,7 @@ class BuildEnvSecrets(unittest.TestCase):
             base = {"aosp_root": root, "targets": {"device": {"lunch": "x-userdebug", "out_dir": "out", "env": {}}}}
             env = AospTree(Config(dict(base), None)).env("device")
             self.assertNotIn("SECRET_PASS", env)                              # default: not passed
+            self.assertEqual(env.get("SOONG_COLLECT_JAVA_DEPS"), "true")      # jdeps json always on
             env = AospTree(Config(dict(base, build_env_secrets=["SECRET_PASS"]), None)).env("device")
             self.assertEqual(env.get("SECRET_PASS"), "zip-pw")                # listed: passed
             self.assertNotIn("OTHER_TOKEN", env)                              # others stay hidden
