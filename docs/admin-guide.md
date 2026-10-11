@@ -194,6 +194,7 @@ for workspace, emulator and deploy settings → `--set key=value`.
 | `targets.release` | the user build for prebuilt delivery (default: device target with `-user`, `out_user`) |
 | `java_home` | JDK for host tools (default `prebuilts/jdk/jdk21/linux-x86`; needs 17+) |
 | `workspace` | `path` (`/appci/{platform}`), `tree` (subdirectory holding the AOSP tree when the manifest nests it, e.g. `android`), `reference` (`/build_env`), `seed` (`copy`, `reference`, `none`), `adopt` (use a tree appci did not create, see 4.1), `sync.policy` (`if-older`, `always`, `never`), `sync.max_age_hours` (12) |
+| `discovery.extra_prod_types` | vendor module types (`soong_config_module_type`, e.g. `xxx_car_app`) treated like `android_app`; when nothing under an app path counts as production code, the job log lists what Soong recorded there and why it was skipped |
 | `stages.default` | stages run by `appci run` without `--stages` |
 | `stages.<stage>.gate` | `max_*` / `min_*` limits; `new_*` metrics count only changed lines |
 | `stages.preupload` | `skip_hooks`, `python`, `python_modules` |

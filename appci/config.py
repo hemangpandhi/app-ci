@@ -184,6 +184,9 @@ DEFAULTS: Dict[str, Any] = {
         # Module names matching this are treated as test/support modules, not production.
         "test_module_pattern": r"(Test|Tests|Testing|ForTesting|TestApp|TestHelper|Robo|Mock|Fake|Sample|Demo)([A-Z_-]|$)|[-_.](test|tests|testing|testutils)([-_.]|$)",
         "exclude_paths": [],
+        # Vendor-defined module types (soong_config_module_type) to treat like android_app /
+        # android_library, e.g. ["xxx_car_app"]; appci reports unknown types it skipped.
+        "extra_prod_types": [],
     },
     # Change impact analysis (see appci/impact.py). Only active when the change is known
     # (merge requests via CI_MERGE_REQUEST_DIFF_BASE_SHA, or --changed-since locally).

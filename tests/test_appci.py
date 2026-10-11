@@ -776,3 +776,62 @@ class ModuleInfoFallback(unittest.TestCase):
                     mock.patch.object(tree, "lock", return_value=mock.MagicMock(__enter__=lambda s: None, __exit__=lambda s, *a: False)):
                 tree.ensure_metadata("device")
             self.assertEqual(calls, [["module-info"], ["out/target/product/dev/module-info.json"]])
+
+
+class DiscoveryVendorTypes(unittest.TestCase):
+    """A vendor tree defines its apps with soong_config_module_type names appci does not know:
+    discovery must say what it skipped (the job log is all the admin sees), and
+    discovery.extra_prod_types makes such a type count as an app."""
+
+    def run_discovery(self, extra, warnings):
+        from unittest import mock
+        from appci import discovery, util
+        from appci.aosp import AospTree
+        from appci.config import Config, DEFAULTS, deep_merge
+        with tempfile.TemporaryDirectory() as root:
+            data = deep_merge(DEFAULTS, {"aosp_root": root, "workdir": root + "/wd", "apps": [],
+                                         "discovery": {"extra_prod_types": extra}})
+            cfg = Config(data, None)
+            tree = AospTree(cfg)
+            (Path(root) / "vendor" / "x" / "apps" / "Media" / "Media").mkdir(parents=True)
+            (Path(root) / "vendor" / "x" / "apps" / "Media" / "Media" / "Android.bp").write_text("")
+            jdeps = {"XCarMediaApp": {"module_type": "x_car_app", "path": ["vendor/x/apps/Media/Media"],
+                                      "srcs": [], "dependencies": []},
+                     "Other": {"module_type": "android_app", "path": ["packages/apps/Other"]}}
+            with mock.patch.object(tree, "ensure_metadata"), mock.patch.object(tree, "jdeps", return_value=jdeps), \
+                    mock.patch.object(tree, "module_info", return_value={}), \
+                    mock.patch.object(util, "warn", side_effect=lambda m: warnings.append(m)):
+                return discovery.discover_app(tree, "vendor/x/apps/Media", "device", {})
+
+    def test_unknown_type_is_reported_then_accepted(self):
+        warnings = []
+        p = self.run_discovery([], warnings)
+        self.assertEqual(p.prod_modules, [])
+        self.assertTrue(any("XCarMediaApp (x_car_app, vendor/x/apps/Media/Media)" in w for w in warnings), warnings)
+        self.assertTrue(any("extra_prod_types" in w for w in warnings))
+        warnings.clear()
+        p = self.run_discovery(["x_car_app"], warnings)
+        self.assertEqual(p.apps, ["XCarMediaApp"])
+        self.assertEqual(warnings, [])
+
+    def test_nothing_listed_names_build_files_and_near_misses(self):
+        from unittest import mock
+        from appci import discovery, util
+        from appci.aosp import AospTree
+        from appci.config import Config, DEFAULTS, deep_merge
+        warnings = []
+        with tempfile.TemporaryDirectory() as root:
+            cfg = Config(deep_merge(DEFAULTS, {"aosp_root": root, "workdir": root + "/wd", "apps": []}), None)
+            tree = AospTree(cfg)
+            (Path(root) / "vendor" / "x" / "apps" / "Media" / "Media").mkdir(parents=True)
+            (Path(root) / "vendor" / "x" / "apps" / "Media" / "Media" / "Android.bp").write_text("")
+            jdeps = {"MediaPrebuilt": {"module_type": "android_app_import", "path": ["vendor/x/prebuilts/Media"]}}
+            with mock.patch.object(tree, "ensure_metadata"), mock.patch.object(tree, "jdeps", return_value=jdeps), \
+                    mock.patch.object(tree, "module_info", return_value={}), \
+                    mock.patch.object(util, "warn", side_effect=lambda m: warnings.append(m)):
+                p = discovery.discover_app(tree, "vendor/x/apps/Media", "device", {})
+        self.assertEqual(p.prod_modules, [])
+        text = "\n".join(warnings)
+        self.assertIn("Soong lists no module under vendor/x/apps/Media", text)
+        self.assertIn("vendor/x/apps/Media/Media/Android.bp", text)
+        self.assertIn("MediaPrebuilt (android_app_import, vendor/x/prebuilts/Media)", text)

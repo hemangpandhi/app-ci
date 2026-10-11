@@ -98,13 +98,19 @@ def discover_app(tree: AospTree, app_path: str, target: str = "device",
     forced_tests = set(entry.get("tests") or [])
     excluded_tests = set(entry.get("exclude_tests") or [])
 
+    extra_prod = set(cfg["discovery"].get("extra_prod_types") or [])
+    prod_types = PROD_TYPES | extra_prod
+
     apps, libs, support, tests = [], [], [], []
     module_paths: Dict[str, str] = {}
+    skipped: Dict[str, str] = {}             # modules under the path of a type appci does not know
     for name, info in jdeps.items():
         paths = info.get("path") or []
         if not paths or not _under(paths[0], app_path) or name in excluded:
             continue
         mtype = info.get("module_type") or ""
+        if mtype in extra_prod:
+            mtype = "android_app"            # vendor app types build and install like android_app
         suites = set((minfo.get(name) or {}).get("compatibility_suites") or [])
         module_paths[name] = paths[0]
         kind = None
@@ -132,15 +138,19 @@ def discover_app(tree: AospTree, app_path: str, target: str = "device",
             continue
         if forced:
             # Explicit module list given: everything else in the tree is support code.
-            if mtype in PROD_TYPES:
+            if mtype in prod_types:
                 support.append(name)
             continue
-        if mtype in SUPPORT_TYPES or (mtype in PROD_TYPES and test_re.search(name)):
+        if mtype in SUPPORT_TYPES or (mtype in prod_types and test_re.search(name)):
             support.append(name)
         elif mtype == "android_app":
             apps.append(name)
-        elif mtype in PROD_TYPES:
+        elif mtype in prod_types:
             libs.append(name)
+        else:
+            skipped[name] = mtype
+    if not apps and not libs:
+        _explain_empty(tree, app_path, jdeps, module_paths, skipped, support, tests)
 
     def collect(mods: List[str]):
         java, kt = set(), set()
@@ -165,6 +175,39 @@ def discover_app(tree: AospTree, app_path: str, target: str = "device",
         java_srcs=java_srcs, kt_srcs=kt_srcs, test_java_srcs=t_java, test_kt_srcs=t_kt,
         module_paths=module_paths,
     )
+
+
+def _explain_empty(tree: AospTree, app_path: str, jdeps: Dict[str, dict], module_paths: Dict[str, str],
+                   skipped: Dict[str, str], support: List[str], tests: List[TestModule]) -> None:
+    """Say why nothing under the app path counts as production code: the job log must make the
+    cause visible without access to the tree (Soong did not list the module at all, or listed it
+    with a type appci does not know)."""
+    if module_paths:
+        found = [f"{n} ({skipped.get(n) or jdeps.get(n, {}).get('module_type')}, {p})"
+                 for n, p in sorted(module_paths.items())]
+        util.warn(f"discovery: {len(found)} module(s) under {app_path}, none of a production type "
+                  f"({', '.join(sorted(PROD_TYPES))}): " + "; ".join(found[:15]))
+        if skipped:
+            util.warn("discovery: unknown module types are skipped; add them to discovery.extra_prod_types "
+                      "(vendor app types) or list the modules under apps.<path>.modules in appci.yaml")
+        if support or tests:
+            util.warn("discovery: modules classed as test/support by name match discovery.test_module_pattern")
+        return
+    util.warn(f"discovery: Soong lists no module under {app_path} "
+              f"({tree.jdeps_path('device').relative_to(tree.root)} has {len(jdeps)} modules)")
+    bp = sorted(str(p.relative_to(tree.root)) for p in (tree.root / app_path).glob("**/Android.bp")
+                if len(p.relative_to(tree.root / app_path).parts) <= 3)
+    mk = sorted(str(p.relative_to(tree.root)) for p in (tree.root / app_path).glob("**/Android.mk")
+                if len(p.relative_to(tree.root / app_path).parts) <= 3)
+    util.warn(f"discovery: build files under {app_path}: {', '.join(bp + mk) or 'none'}")
+    leaf = app_path.rstrip("/").rsplit("/", 1)[-1].lower()
+    near = [f"{n} ({i.get('module_type')}, {(i.get('path') or [''])[0]})" for n, i in sorted(jdeps.items())
+            if leaf in (i.get("path") or [""])[0].lower() or leaf in n.lower()]
+    if near:
+        util.warn(f"discovery: modules Soong lists with '{leaf}' in their name or path: " + "; ".join(near[:15]))
+    util.warn("discovery: if the Android.bp is there but Soong does not list its modules, the product "
+              "does not enable their Soong namespace (PRODUCT_SOONG_NAMESPACES), or they are defined in "
+              "Android.mk only, or the metadata is stale (appci discover --refresh)")
 
 
 def _project_root(root: Path, path: str) -> str:
