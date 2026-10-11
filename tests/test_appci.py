@@ -778,6 +778,75 @@ class ModuleInfoFallback(unittest.TestCase):
             self.assertEqual(calls, [["module-info"], ["out/target/product/dev/module-info.json"]])
 
 
+class LintTargetFallback(unittest.TestCase):
+    """Android 14 and older: Soong has no `<module>-lint` phony target. The lint stage must ask
+    for the report file instead, and read it from the same place afterwards."""
+
+    def test_report_file_when_phony_missing(self):
+        from appci import util
+        from appci.aosp import AospTree
+        from appci.config import Config, DEFAULTS, deep_merge
+        from appci.context import RunContext
+        from appci.discovery import AppProfile
+        from appci.model import StageResult
+        from appci.stages.lint import LintStage
+        with tempfile.TemporaryDirectory() as root:
+            data = deep_merge(DEFAULTS, {"aosp_root": root, "workdir": root + "/wd", "apps": []})
+            cfg = Config(data, None)
+            tree = AospTree(cfg)
+            profile = AppProfile(path="vendor/x/apps/Media", name="Media", slug="app",
+                                 apps=["XCarMediaApp"], module_paths={"XCarMediaApp": "vendor/x/apps/Media/Media"})
+            ctx = RunContext(cfg=cfg, tree=tree, profile=profile, entry={}, report_root=Path(root) / "reports")
+            xml_rel = "out/soong/.intermediates/vendor/x/apps/Media/Media/XCarMediaApp/android_common/lint/lint-report.xml"
+            calls = []
+
+            def fake_m(target, modules, log, **kw):
+                calls.append(list(modules))
+                log.parent.mkdir(parents=True, exist_ok=True)
+                if modules == ["XCarMediaApp-lint"]:
+                    log.write_text("FAILED: ninja: unknown target 'XCarMediaApp-lint'\n")
+                    return util.CommandResult("m", 1, log, 0.0)
+                xml = Path(root) / xml_rel
+                xml.parent.mkdir(parents=True, exist_ok=True)
+                xml.write_text('<issues format="6"><issue id="Typos" severity="Warning" message="t" '
+                               'category="Typography"><location file="vendor/x/apps/Media/Media/A.java" '
+                               'line="2"/></issue></issues>')
+                log.write_text("ok\n")
+                return util.CommandResult("m", 0, log, 0.0)
+            res = StageResult("lint", "app")
+            with mock.patch.object(tree, "m", side_effect=fake_m), \
+                    mock.patch.object(tree, "lock", return_value=mock.MagicMock(__enter__=lambda s: None, __exit__=lambda s, *a: False)):
+                LintStage().run(ctx, res)
+            self.assertEqual(calls, [["XCarMediaApp-lint"], [xml_rel]])
+            self.assertEqual(res.metrics["warnings"], 1)
+            self.assertIn("1 warnings in 1 module(s)", res.summary)
+
+    def test_module_without_lint_rule_is_reported(self):
+        from appci import util
+        from appci.aosp import AospTree
+        from appci.config import Config, DEFAULTS, deep_merge
+        from appci.context import RunContext
+        from appci.discovery import AppProfile
+        from appci.model import ERROR, StageResult
+        from appci.stages.lint import LintStage
+        with tempfile.TemporaryDirectory() as root:
+            cfg = Config(deep_merge(DEFAULTS, {"aosp_root": root, "workdir": root + "/wd", "apps": []}), None)
+            tree = AospTree(cfg)
+            profile = AppProfile(path="p/X", name="X", slug="app", apps=["X"], module_paths={"X": "p/X"})
+            ctx = RunContext(cfg=cfg, tree=tree, profile=profile, entry={}, report_root=Path(root) / "reports")
+
+            def fake_m(target, modules, log, **kw):
+                log.parent.mkdir(parents=True, exist_ok=True)
+                log.write_text(f"FAILED: ninja: unknown target '{modules[0]}'\n")
+                return util.CommandResult("m", 1, log, 0.0)
+            res = StageResult("lint", "app")
+            with mock.patch.object(tree, "m", side_effect=fake_m), \
+                    mock.patch.object(tree, "lock", return_value=mock.MagicMock(__enter__=lambda s: None, __exit__=lambda s, *a: False)):
+                LintStage().run(ctx, res)
+            self.assertEqual(res.status, ERROR)
+            self.assertIn("no lint rule for X", res.summary)
+
+
 class DiscoveryVendorTypes(unittest.TestCase):
     """A vendor tree defines its apps with soong_config_module_type names appci does not know:
     discovery must say what it skipped (the job log is all the admin sees), and
