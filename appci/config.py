@@ -8,6 +8,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import shutil
 import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -285,6 +286,7 @@ class Config:
         # Resolved lazily: commands like `appci gitlab` must work without a tree (e.g. CI self-test).
         self._aosp_root = Path(os.path.expandvars(str(root))).resolve() if root else None
         self._workdir: Optional[Path] = None
+        self._jdk_warned = False
 
     @property
     def aosp_root(self) -> Path:
@@ -311,14 +313,35 @@ class Config:
         p = Path(os.path.expandvars(value))
         return p if p.is_absolute() else self.aosp_root / p
 
+    # JDKs AOSP trees ship, newest first; the host tools need 17+ (Android 14 ships jdk17).
+    TREE_JDKS = ("prebuilts/jdk/jdk21/linux-x86", "prebuilts/jdk/jdk17/linux-x86")
+
     @property
     def java_home(self) -> Path:
-        return self.path(self.data["java_home"])
+        """The configured JDK; when that is not in the tree, the newest JDK the tree ships."""
+        configured = self.path(self.data["java_home"])
+        if (configured / "bin" / "java").is_file():
+            return configured
+        for rel in self.TREE_JDKS:
+            cand = self.aosp_root / rel
+            if (cand / "bin" / "java").is_file():
+                if not self._jdk_warned:
+                    self._jdk_warned = True
+                    from . import util
+                    util.info(f"java_home {self.data['java_home']} is not in this tree; using {rel}")
+                return cand
+        return configured
 
     @property
     def java(self) -> str:
         j = self.java_home / "bin" / "java"
-        return str(j) if j.exists() else "java"
+        if j.is_file():
+            return str(j)
+        found = shutil.which("java")
+        if found:
+            return found
+        raise RuntimeError(f"no JDK: {j} does not exist and no `java` is on PATH; set java_home to the "
+                           f"tree's JDK (e.g. {self.TREE_JDKS[-1]}) or install one in the image")
 
     def target(self, name: str) -> Dict[str, Any]:
         t = self.data["targets"].get(name)

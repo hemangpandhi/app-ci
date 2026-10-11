@@ -192,7 +192,7 @@ for workspace, emulator and deploy settings → `--set key=value`.
 | `targets.device` / `targets.emulator` | lunch target and `out_dir`; the emulator target builds with coverage |
 | `build_env_secrets` | secret-looking CI variables (e.g. `SECRET_PASS`) the build may see; all others are hidden from build, test and hook processes |
 | `targets.release` | the user build for prebuilt delivery (default: device target with `-user`, `out_user`) |
-| `java_home` | JDK for host tools (default `prebuilts/jdk/jdk21/linux-x86`; needs 17+) |
+| `java_home` | JDK for host tools (default `prebuilts/jdk/jdk21/linux-x86`; needs 17+; when missing in the tree, the newest JDK the tree ships is used, e.g. jdk17 on Android 14) |
 | `workspace` | `path` (`/appci/{platform}`), `tree` (subdirectory holding the AOSP tree when the manifest nests it, e.g. `android`), `reference` (`/build_env`), `seed` (`copy`, `reference`, `none`), `adopt` (use a tree appci did not create, see 4.1), `sync.policy` (`if-older`, `always`, `never`), `sync.max_age_hours` (12) |
 | `discovery.extra_prod_types` | vendor module types (`soong_config_module_type`, e.g. `xxx_car_app`) treated like `android_app`; when nothing under an app path counts as production code, the job log lists what Soong recorded there and why it was skipped |
 | `stages.default` | stages run by `appci run` without `--stages` |

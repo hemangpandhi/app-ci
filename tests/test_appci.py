@@ -918,3 +918,25 @@ class BlueprintModuleTypes(unittest.TestCase):
                 d = tree.jdeps("device")
             self.assertEqual(d["XCarMediaApp"]["module_type"], "android_app")
             self.assertEqual(len(d["XCarMediaApp"]["srcs"]), 2)
+
+
+class JdkResolution(unittest.TestCase):
+    """Android 14 trees ship prebuilts/jdk/jdk17, not jdk21: the JDK is found in the tree, and
+    without any JDK the stages fail with a message instead of a traceback from subprocess."""
+
+    def test_tree_jdk_fallback_and_clear_error(self):
+        import os
+        from unittest import mock
+        from appci.config import Config
+        with tempfile.TemporaryDirectory() as root:
+            cfg = Config({"aosp_root": root, "java_home": "prebuilts/jdk/jdk21/linux-x86", "targets": {}}, None)
+            j17 = Path(root) / "prebuilts" / "jdk" / "jdk17" / "linux-x86" / "bin"
+            with mock.patch.dict(os.environ, {"PATH": "/nonexistent"}):
+                with self.assertRaisesRegex(RuntimeError, "no JDK"):
+                    cfg.java
+                j17.mkdir(parents=True)
+                (j17 / "java").write_text("")
+                self.assertEqual(cfg.java, str(j17 / "java"))
+                self.assertEqual(cfg.java_home, j17.parent)
+            cfg = Config({"aosp_root": root, "java_home": "prebuilts/jdk/jdk17/linux-x86", "targets": {}}, None)
+            self.assertEqual(cfg.java_home, j17.parent)                 # configured one wins when present
