@@ -13,6 +13,20 @@ from . import util
 from .config import Config
 
 
+_passed_secrets_warned: set = set()
+
+
+def _warn_passed_secret(name: str, missing: bool = False) -> None:
+    """Once per process: a secret deliberately exposed to the build (or configured but absent)."""
+    if name in _passed_secrets_warned:
+        return
+    _passed_secrets_warned.add(name)
+    if missing:
+        util.warn(f"build_env_secrets: ${name} is not set in this job; the build will not see it")
+    else:
+        util.warn(f"build_env_secrets: ${name} is passed to the build environment (readable by the code under test)")
+
+
 class AospTree:
     def __init__(self, cfg: Config):
         self.cfg = cfg
@@ -42,6 +56,13 @@ class AospTree:
         out = str(t.get("out_dir") or "out")
         env: Dict[str, Optional[str]] = {"OUT_DIR": None if out == "out" else out}
         env.update({k: str(v) for k, v in (t.get("env") or {}).items()})
+        for name in self.cfg.get("build_env_secrets") or []:
+            value = util.secret(name)
+            if value:
+                env[name] = value
+                _warn_passed_secret(name)
+            else:
+                _warn_passed_secret(name, missing=True)
         if t.get("coverage"):
             paths = sorted(set(self.coverage_paths()) | set(coverage_paths or []))
             env.update({

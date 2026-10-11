@@ -190,6 +190,7 @@ for workspace, emulator and deploy settings → `--set key=value`.
 | `platforms.<name>.manifest` | `url`, `branch`, `file`, `groups`, `depth` of the platform manifest |
 | `platforms.<name>.<any key>` | overrides for that platform (targets, `java_home`, stages, apps) |
 | `targets.device` / `targets.emulator` | lunch target and `out_dir`; the emulator target builds with coverage |
+| `build_env_secrets` | secret-looking CI variables (e.g. `SECRET_PASS`) the build may see; all others are hidden from build, test and hook processes |
 | `targets.release` | the user build for prebuilt delivery (default: device target with `-user`, `out_user`) |
 | `java_home` | JDK for host tools (default `prebuilts/jdk/jdk21/linux-x86`; needs 17+) |
 | `workspace` | `path` (`/appci/{platform}`), `tree` (subdirectory holding the AOSP tree when the manifest nests it, e.g. `android`), `reference` (`/build_env`), `seed` (`copy`, `reference`, `none`), `sync.policy` (`if-older`, `always`), `sync.max_age_hours` (12) |
@@ -372,7 +373,9 @@ platforms:
 What appci does:
 
 * Build, test, lint and hook processes do not inherit CI secrets (`*TOKEN*`, `*PASSWORD*`,
-  `*SECRET*`, `*CREDENTIAL*`, `CI_REPOSITORY_URL`, …); only sonar-scanner gets `SONAR_TOKEN`. Git
+  `*SECRET*`, `*CREDENTIAL*`, `CI_REPOSITORY_URL`, …); only sonar-scanner gets `SONAR_TOKEN`, plus the names
+  listed in `build_env_secrets` (a vendor build step that unpacks resources with a password, for example;
+  the job log warns that merge-request code can read them). Git
   credentials exist only during `repo sync`. Credentials in URLs are shown as `***` in logs.
 * Cached tools, wheels and emulator releases are checked against their pinned or published
   SHA-256 on every use and run from a private copy per job. Archives with unsafe paths are refused.

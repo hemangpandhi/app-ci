@@ -687,3 +687,24 @@ class SonarKey(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BuildEnvSecrets(unittest.TestCase):
+    def test_listed_secret_reaches_build_env_only_when_configured(self):
+        import os
+        from unittest import mock
+        from appci import util
+        from appci.aosp import AospTree
+        from appci.config import Config
+        with tempfile.TemporaryDirectory() as root, \
+                mock.patch.dict(os.environ, {"SECRET_PASS": "zip-pw", "OTHER_TOKEN": "t"}, clear=False):
+            util._SECRETS.clear()
+            util.seal_secrets()
+            self.assertNotIn("SECRET_PASS", os.environ)                       # hidden from children
+            base = {"aosp_root": root, "targets": {"device": {"lunch": "x-userdebug", "out_dir": "out", "env": {}}}}
+            env = AospTree(Config(dict(base), None)).env("device")
+            self.assertNotIn("SECRET_PASS", env)                              # default: not passed
+            env = AospTree(Config(dict(base, build_env_secrets=["SECRET_PASS"]), None)).env("device")
+            self.assertEqual(env.get("SECRET_PASS"), "zip-pw")                # listed: passed
+            self.assertNotIn("OTHER_TOKEN", env)                              # others stay hidden
+            util._SECRETS.clear()

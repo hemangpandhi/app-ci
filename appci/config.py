@@ -27,6 +27,11 @@ DEFAULTS: Dict[str, Any] = {
     # over this config (targets, stages, apps, ...) and its workspace becomes the AOSP root.
     "platform": None,
     "platforms": {},
+    # CI variables that look like secrets (names with TOKEN, PASSWORD, SECRET, ...) are hidden from
+    # every build/test/hook process. Names listed here are passed to the build environment anyway
+    # (e.g. a password a vendor build step needs to unpack resources); per platform under
+    # platforms.<name>.build_env_secrets. Merge-request code can read them.
+    "build_env_secrets": [],
     # repo-managed CI trees (`appci workspace`, see appci/workspace.py). Per platform under
     # platforms.<name>.workspace; manifest under platforms.<name>.manifest {url, branch, file, groups, depth}.
     # Prebuilt emulator from Artifactory (or any HTTP folder / local dir) instead of `appci image`:
