@@ -170,28 +170,60 @@ class AospTree:
         data = _load_json(path)
         if path not in _types_filled:
             _types_filled.add(path)
-            if data and not any(i.get("module_type") for i in data.values()):
-                self._fill_module_types(target, path, data)
+            if data and (not all(i.get("module_type") for i in data.values())
+                         or not all(i.get("path") for i in data.values())):
+                self._complete_jdeps(target, path, data)
         return data
 
-    def _fill_module_types(self, target: str, path: str, data: Dict[str, dict]) -> None:
-        """Soong before Android 15 writes no module_type: take it from each module's Android.bp
-        (cached in the work dir against the jdeps file's mtime)."""
+    # Keys appci completes when Soong leaves them out (Android 14 and older): the module type is
+    # not recorded at all; device modules carry no path and no srcs.
+    _COMPLETED = ("path", "module_type", "srcs")
+
+    def _complete_jdeps(self, target: str, path: str, data: Dict[str, dict]) -> None:
+        """Fill path (from module-info.json), module_type (Android.bp, else module-info class) and
+        srcs (Android.bp globs) where Soong wrote none; cached against the jdeps file's mtime."""
         from . import blueprint
-        cache = self.cfg.workdir / "cache" / f"module_types.{util.slug(self.lunch(target))}.json"
+        cache = self.cfg.workdir / "cache" / f"jdeps_completion.{util.slug(self.lunch(target))}.json"
         mtime = os.path.getmtime(path)
         cached = util.read_json(cache, {}) or {}
-        if cached.get("jdeps_mtime") == mtime and isinstance(cached.get("types"), dict):
-            for name, mtype in cached["types"].items():
+        if cached.get("jdeps_mtime") == mtime and isinstance(cached.get("modules"), dict):
+            for name, extra in cached["modules"].items():
                 if name in data:
-                    data[name].setdefault("module_type", mtype)
+                    for k, v in extra.items():
+                        data[name].setdefault(k, v)
             return
-        util.info("Soong wrote no module types (Android 14 or older); reading them from Android.bp files ...")
-        n = blueprint.fill_module_types(self.root, data)
-        util.info(f"module types read for {n} of {len(data)} modules")
+        util.info("Soong wrote incomplete module data (Android 14 or older); completing it from "
+                  "module-info.json and Android.bp files ...")
+        minfo = self.module_info(target)
+        missing = {name: [k for k in self._COMPLETED if not info.get(k)] for name, info in data.items()}
+        n_paths = 0
+        for name, info in data.items():
+            if not info.get("path"):
+                mp = (minfo.get(name) or {}).get("path") or []
+                if mp:
+                    info["path"] = [mp[0]]
+                    n_paths += 1
+        n_types = blueprint.fill_module_types(self.root, data)
+        for name, info in data.items():           # last resort: the Make class
+            if info.get("module_type"):
+                continue
+            mi = minfo.get(name) or {}
+            cls = (mi.get("class") or [""])[0]
+            suites = [s for s in mi.get("compatibility_suites") or [] if s != "null-suite"]
+            is_test = bool(mi.get("test_config")) or bool(suites) or True in (mi.get("auto_test_config") or [])
+            host = any("/host/" in p for p in mi.get("installed") or [])
+            if cls == "APPS":
+                info["module_type"] = "android_test" if is_test else "android_app"
+            elif cls == "JAVA_LIBRARIES":
+                info["module_type"] = "java_test_host" if is_test and host else "java_library"
+            else:
+                continue
+            n_types += 1
+        n_srcs = blueprint.fill_module_srcs(self.root, data)
+        util.info(f"completed {len(data)} modules: path for {n_paths}, type for {n_types}, sources for {n_srcs}")
         cache.parent.mkdir(parents=True, exist_ok=True)
-        util.write_json(cache, {"jdeps_mtime": mtime,
-                                "types": {k: v["module_type"] for k, v in data.items() if v.get("module_type")}})
+        added = {name: {k: data[name][k] for k in keys if data[name].get(k)} for name, keys in missing.items()}
+        util.write_json(cache, {"jdeps_mtime": mtime, "modules": {n: e for n, e in added.items() if e}})
 
     def intermediates(self, target: str, module_path: str, module: str) -> Path:
         return self.out_dir(target) / "soong" / ".intermediates" / module_path / module

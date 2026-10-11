@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 from functools import lru_cache
 from pathlib import Path
-from typing import Dict, Iterator, Tuple
+from typing import Dict, Iterator, List, Tuple
 
 _NAME_RE = re.compile(r'(?m)^\s*name\s*:\s*"([^"]+)"')
 _BASE_RE = re.compile(r'(?m)^\s*module_type\s*:\s*"([^"]+)"')
@@ -140,15 +140,26 @@ def _custom_types(root: str, bp: str) -> Dict[str, str]:
     return out
 
 
+_SRCS_RE = re.compile(r"(?ms)^\s*srcs\s*:\s*\[(.*?)\]")
+_EXCL_RE = re.compile(r"(?ms)^\s*exclude_srcs\s*:\s*\[(.*?)\]")
+SRC_EXT = (".java", ".kt")
+
+
 @lru_cache(maxsize=None)
 def module_types(root: str, bp: str) -> Dict[str, str]:
     """Module name -> Soong type for every module an Android.bp declares, custom types resolved."""
+    return {n: t for n, (t, _, _) in modules(root, bp).items()}
+
+
+@lru_cache(maxsize=None)
+def modules(root: str, bp: str) -> Dict[str, Tuple[str, Tuple[str, ...], Tuple[str, ...]]]:
+    """Module name -> (Soong type, srcs patterns, exclude_srcs patterns) from an Android.bp."""
     try:
         text = strip_comments(Path(bp).read_text())
     except OSError:
         return {}
     custom: Dict[str, str] = {}
-    mods: Dict[str, str] = {}
+    mods: Dict[str, Tuple[str, Tuple[str, ...], Tuple[str, ...]]] = {}
     for mtype, body in top_level_blocks(text):
         flat = _flat(body)
         if mtype == "soong_config_module_type":
@@ -166,8 +177,34 @@ def module_types(root: str, bp: str) -> Dict[str, str]:
             continue
         name = _NAME_RE.search(flat)
         if name:
-            mods[name.group(1)] = mtype
-    return {n: custom.get(t, t) for n, t in mods.items()}
+            srcs, excl = _SRCS_RE.search(flat), _EXCL_RE.search(flat)
+            mods[name.group(1)] = (mtype, tuple(re.findall(r'"([^"]+)"', srcs.group(1))) if srcs else (),
+                                   tuple(re.findall(r'"([^"]+)"', excl.group(1))) if excl else ())
+    return {n: (custom.get(t, t), srcs, excl) for n, (t, srcs, excl) in mods.items()}
+
+
+def module_srcs(root: Path, module_dir: str, name: str) -> List[str]:
+    """The .java/.kt files a module's `srcs` globs name, relative to the tree (like Soong's own
+    srcs list). References to other modules (":gen") and generated sources are not files."""
+    entry = modules(str(root), str(root / module_dir / "Android.bp")).get(name)
+    if not entry:
+        return []
+    _, patterns, excludes = entry
+    base = root / module_dir
+    files = set()
+    for pat in patterns:
+        if pat.startswith(":") or not pat.endswith(SRC_EXT):
+            continue
+        files.update(p for p in base.glob(pat) if p.is_file())
+    for pat in excludes:
+        if not pat.startswith(":"):
+            files.difference_update(base.glob(pat))
+    return sorted(str(p.relative_to(root)) for p in files)
+
+
+JAVA_TYPES = {"android_app", "android_library", "java_library", "java_library_static", "android_test",
+              "android_test_helper_app", "java_test_host", "android_robolectric_test", "android_ravenwood_test",
+              "java_test", "java_test_helper_library", "custom_android_test"}
 
 
 def fill_module_types(root: Path, jdeps: Dict[str, dict]) -> int:
@@ -183,5 +220,22 @@ def fill_module_types(root: Path, jdeps: Dict[str, dict]) -> int:
         mtype = module_types(str(root), str(root / paths[0] / "Android.bp")).get(name)
         if mtype:
             info["module_type"] = mtype
+            n += 1
+    return n
+
+
+def fill_module_srcs(root: Path, jdeps: Dict[str, dict]) -> int:
+    """Add `srcs` to Java/Kotlin jdeps entries that lack it, by expanding the module's Android.bp
+    srcs globs. Returns the number filled in."""
+    n = 0
+    for name, info in jdeps.items():
+        if "srcs" in info or info.get("module_type") not in JAVA_TYPES:
+            continue
+        paths = info.get("path") or []
+        if not paths:
+            continue
+        srcs = module_srcs(root, paths[0], name)
+        if srcs:
+            info["srcs"] = srcs
             n += 1
     return n

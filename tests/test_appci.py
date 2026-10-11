@@ -868,7 +868,10 @@ class BlueprintModuleTypes(unittest.TestCase):
             self.assertEqual(jdeps["XCarMediaApp"]["module_type"], "android_app")
             self.assertNotIn("module_type", jdeps["Elsewhere"])
 
-    def test_tree_fills_types_once_and_caches(self):
+    def test_tree_completes_jdeps_once_and_caches(self):
+        """Android 14 jdeps: no module_type anywhere, device modules without path or srcs. appci
+        fills them from module-info.json and Android.bp, and the next process reads the cache."""
+        from unittest import mock
         from appci import aosp
         from appci.aosp import AospTree
         from appci.config import Config
@@ -878,15 +881,40 @@ class BlueprintModuleTypes(unittest.TestCase):
                           "targets": {"device": {"lunch": "x-userdebug", "out_dir": "out", "env": {}}}}, None)
             tree = AospTree(cfg)
             (r / "out" / "soong").mkdir(parents=True)
-            (r / "packages" / "apps" / "A").mkdir(parents=True)
-            (r / "packages" / "apps" / "A" / "Android.bp").write_text('android_app {\n    name: "A",\n}\n')
+            app = r / "vendor" / "x" / "apps" / "Media" / "MediaApp"
+            (app / "src" / "com" / "x").mkdir(parents=True)
+            (app / "src" / "com" / "x" / "Main.java").write_text("")
+            (app / "src" / "com" / "x" / "Util.kt").write_text("")
+            (app / "src" / "com" / "x" / "Gen.aidl").write_text("")
+            (app / "Android.bp").write_text('android_app {\n    name: "XCarMediaApp",\n'
+                                            '    srcs: ["src/**/*.java", "src/**/*.kt", ":gen"],\n}\n')
+            (r / "cts" / "host").mkdir(parents=True)
             jd = r / "out" / "soong" / "module_bp_java_deps.json"
-            jd.write_text(json.dumps({"A": {"path": ["packages/apps/A"]}}))
+            jd.write_text(json.dumps({
+                "XCarMediaApp": {"dependencies": ["androidx.core_core"]},          # device: no path, no srcs
+                "HostTest": {"path": ["cts/host"], "srcs": ["cts/host/T.java"]},  # host: path, no type
+                "Mk": {},                                                           # unknown to Android.bp
+            }))
+            minfo = {"XCarMediaApp": {"class": ["APPS"], "path": ["vendor/x/apps/Media/MediaApp"]},
+                     "HostTest": {"class": ["JAVA_LIBRARIES"], "path": ["cts/host"], "test_config": ["c.xml"],
+                                  "installed": ["out/host/linux-x86/framework/HostTest.jar"]},
+                     "Mk": {"class": ["APPS"], "path": ["vendor/x/mk"]}}
             aosp._load_json.cache_clear(); aosp._types_filled.clear()
-            self.assertEqual(tree.jdeps("device")["A"]["module_type"], "android_app")
-            cache = json.loads((r / "wd" / "cache" / "module_types.x-userdebug.json").read_text())
-            self.assertEqual(cache["types"], {"A": "android_app"})
-            # next process: the cache is used, no Android.bp needed any more
-            (r / "packages" / "apps" / "A" / "Android.bp").unlink()
+            with mock.patch.object(tree, "module_info", return_value=minfo):
+                d = tree.jdeps("device")
+            self.assertEqual(d["XCarMediaApp"]["path"], ["vendor/x/apps/Media/MediaApp"])
+            self.assertEqual(d["XCarMediaApp"]["module_type"], "android_app")
+            self.assertEqual(d["XCarMediaApp"]["srcs"], ["vendor/x/apps/Media/MediaApp/src/com/x/Main.java",
+                                                         "vendor/x/apps/Media/MediaApp/src/com/x/Util.kt"])
+            self.assertEqual(d["HostTest"]["module_type"], "java_test_host")       # from the Make class
+            self.assertEqual(d["Mk"]["module_type"], "android_app")
+            cache = json.loads((r / "wd" / "cache" / "jdeps_completion.x-userdebug.json").read_text())
+            self.assertEqual(set(cache["modules"]), {"XCarMediaApp", "HostTest", "Mk"})
+            self.assertNotIn("srcs", cache["modules"]["HostTest"])                   # Soong's own data not copied
+            # next process: the cache is used, Android.bp and module-info not needed any more
+            (app / "Android.bp").unlink()
             aosp._load_json.cache_clear(); aosp._types_filled.clear()
-            self.assertEqual(tree.jdeps("device")["A"]["module_type"], "android_app")
+            with mock.patch.object(tree, "module_info", side_effect=AssertionError("must not be read")):
+                d = tree.jdeps("device")
+            self.assertEqual(d["XCarMediaApp"]["module_type"], "android_app")
+            self.assertEqual(len(d["XCarMediaApp"]["srcs"]), 2)

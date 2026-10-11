@@ -273,8 +273,8 @@ apps:
   differ per platform.
 * appci has been validated end to end on Android 17 (AAOS). On other releases, run one pilot MR
   per platform first; lunch target names and `java_home` are the usual differences. Android 14
-  trees are handled: no `module-info` target, and module types read from Android.bp when Soong
-  does not record them.
+  trees are handled: no `module-info` target, and module paths, types and source lists completed
+  from module-info.json and Android.bp where Soong's dependency file leaves them out.
 
 ### 4.1 Tree baked into the image (no runner volume)
 
