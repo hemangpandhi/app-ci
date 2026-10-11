@@ -42,6 +42,7 @@ DEFAULTS: Dict[str, Any] = {
     },
     "workspace": {
         "path": "/appci/{platform}",          # on the runner's persistent volume
+        "tree": "",                           # subdirectory holding the AOSP tree when the manifest nests it (e.g. android)
         "reference": "/build_env",            # .repo cache inside the platform image
         "seed": "copy",                       # copy | reference (git alternates) | none
         "repo": {"command": None},            # default: repo on PATH, else seeded from the cache
@@ -358,9 +359,11 @@ def load_config(path: Optional[str] = None, overrides: Optional[Dict[str, Any]] 
         data = deep_merge(data, overrides)
     if name and not (overrides or {}).get("aosp_root"):
         from .workspace import resolve
-        ws_path = resolve(data)["path"]
-        # CI: the platform's workspace is the tree. On a developer machine (no such workspace) the
-        # platform section still applies (lunch targets, JDK, ...) to the tree found as usual.
+        ws = resolve(data)
+        ws_path = ws["path"]
+        # CI: the platform's workspace is the tree (or its workspace.tree subdirectory when the
+        # manifest nests the platform, e.g. android/). On a developer machine (no such workspace)
+        # the platform section still applies (lunch targets, JDK, ...) to the tree found as usual.
         if ws_path and (os.environ.get("CI") or Path(ws_path).exists()):
-            data["aosp_root"] = str(ws_path)
+            data["aosp_root"] = str(ws_path / ws["tree"] if ws["tree"] else ws_path)
     return Config(data, source)

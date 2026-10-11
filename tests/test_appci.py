@@ -512,11 +512,16 @@ class Workspace(unittest.TestCase):
         c, ws = self.cfg({"APPCI_PLATFORM": "p1", "APPCI_WORKSPACE": "/vol/{platform}", "CI": "true"})
         self.assertEqual(c["targets"]["device"]["lunch"], "p1_car-userdebug")    # platform section
         self.assertEqual(str(c.aosp_root), "/vol/p1")                              # CI: tree = workspace
+        c, ws = self.cfg({"APPCI_PLATFORM": "p1", "APPCI_WORKSPACE": "/vol/{platform}", "CI": "true"},
+                         workspace={"tree": "android/"})
+        self.assertEqual((str(c.aosp_root), ws["tree"]), ("/vol/p1/android", "android"))  # nested tree
         import os
-        with mock.patch.dict(os.environ, {}, clear=False):
+        with tempfile.TemporaryDirectory() as own, mock.patch.dict(os.environ, {}, clear=False):
             os.environ.pop("CI", None)
-            c, _ = self.cfg({"APPCI_PLATFORM": "p1", "APPCI_WORKSPACE": "/vol/{platform}"})
-            self.assertNotEqual(str(c.aosp_root), "/vol/p1")                       # local: own tree
+            (Path(own) / "build" / "soong").mkdir(parents=True)
+            (Path(own) / "build" / "envsetup.sh").write_text("")
+            c, _ = self.cfg({"APPCI_PLATFORM": "p1", "APPCI_WORKSPACE": "/vol/{platform}", "APPCI_AOSP_ROOT": own})
+            self.assertEqual(str(c.aosp_root), str(Path(own).resolve()))          # local: own tree
             self.assertEqual(c["targets"]["device"]["lunch"], "p1_car-userdebug")  # section still applies
         self.assertEqual(ws["manifest"]["branch"], "b1")
         self.assertEqual(ws["sync"]["max_age_hours"], 2)

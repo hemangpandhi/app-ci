@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import shlex
+import subprocess
 import time
 from functools import lru_cache
 from pathlib import Path
@@ -86,13 +87,21 @@ class AospTree:
         cache = self.cfg.workdir / "cache" / f"product_out.{util.slug(self.lunch(target))}.txt"
         if cache.exists():
             return Path(cache.read_text().strip())
-        res = util.capture(["bash", "-c",
-                            f"cd {shlex.quote(str(self.root))} && source build/envsetup.sh >/dev/null && "
-                            f"lunch {shlex.quote(self.lunch(target))} >/dev/null && get_build_var PRODUCT_OUT"],
-                           env=self.env(target))
-        value = res.strip().splitlines()[-1] if res.strip() else ""
+        envsetup = self.root / "build" / "envsetup.sh"
+        if not envsetup.is_file():
+            raise RuntimeError(f"Could not determine PRODUCT_OUT for {self.lunch(target)}: {envsetup} does not "
+                               f"exist (the AOSP root is {self.root}; if the manifest nests the platform in a "
+                               "subdirectory, set aosp_root in the platform section)")
+        proc = subprocess.run(["bash", "-c",
+                               f"cd {shlex.quote(str(self.root))} && source build/envsetup.sh >/dev/null && "
+                               f"lunch {shlex.quote(self.lunch(target))} >/dev/null && get_build_var PRODUCT_OUT"],
+                              env=util.merge_env(self.env(target)), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                              text=True)
+        value = proc.stdout.strip().splitlines()[-1] if proc.stdout.strip() else ""
         if not value:
-            raise RuntimeError(f"Could not determine PRODUCT_OUT for {self.lunch(target)}")
+            tail = "\n".join(proc.stderr.strip().splitlines()[-15:])
+            raise RuntimeError(f"Could not determine PRODUCT_OUT for {self.lunch(target)} "
+                               f"(lunch in {self.root} failed):\n{tail}")
         p = Path(value) if Path(value).is_absolute() else self.root / value
         cache.parent.mkdir(parents=True, exist_ok=True)
         cache.write_text(str(p))

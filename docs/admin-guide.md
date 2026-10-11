@@ -192,7 +192,7 @@ for workspace, emulator and deploy settings → `--set key=value`.
 | `targets.device` / `targets.emulator` | lunch target and `out_dir`; the emulator target builds with coverage |
 | `targets.release` | the user build for prebuilt delivery (default: device target with `-user`, `out_user`) |
 | `java_home` | JDK for host tools (default `prebuilts/jdk/jdk21/linux-x86`; needs 17+) |
-| `workspace` | `path` (`/appci/{platform}`), `reference` (`/build_env`), `seed` (`copy`, `reference`, `none`), `sync.policy` (`if-older`, `always`), `sync.max_age_hours` (12) |
+| `workspace` | `path` (`/appci/{platform}`), `tree` (subdirectory holding the AOSP tree when the manifest nests it, e.g. `android`), `reference` (`/build_env`), `seed` (`copy`, `reference`, `none`), `sync.policy` (`if-older`, `always`), `sync.max_age_hours` (12) |
 | `stages.default` | stages run by `appci run` without `--stages` |
 | `stages.<stage>.gate` | `max_*` / `min_*` limits; `new_*` metrics count only changed lines |
 | `stages.preupload` | `skip_hooks`, `python`, `python_modules` |

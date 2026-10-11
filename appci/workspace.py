@@ -20,6 +20,9 @@ that into a tree the other commands can use:
   the manifest) and restores every project's files (`git reset --hard`). `--repair` forces this;
 * one process per workspace at a time (file lock; GitLab resource_group on top).
 
+When the manifest nests the platform in a subdirectory (projects at `android/...`), `workspace.tree`
+names it: the AOSP root is then `<workspace>/<tree>` and app paths stay relative to that root.
+
 Everything comes from `platforms.<name>` in appci.yaml and can be overridden per job with
 APPCI_MANIFEST_URL / _BRANCH / _FILE / _GROUPS / _DEPTH, APPCI_WORKSPACE, APPCI_REPO_REFERENCE.
 """
@@ -58,7 +61,9 @@ def resolve(cfg) -> Dict[str, Any]:
     path = os.environ.get("APPCI_WORKSPACE") or ws.get("path") or ""
     path = os.path.expandvars(path.replace("{platform}", name or "default"))
     ref = os.environ.get("APPCI_REPO_REFERENCE", ws.get("reference") or "")
+    tree = str(ws.get("tree") or "").strip("/")
     return {"platform": name, "path": Path(path) if path else None, "seed": ws.get("seed", "copy"),
+            "tree": tree,
             "manifest": {k: manifest.get(k) for k in MANIFEST_KEYS},
             "local_manifests": list(plat.get("local_manifests") or ws.get("local_manifests") or []),
             "reference": Path(ref) if ref else None,
@@ -186,6 +191,8 @@ def ensure(cfg, apps: List[str], force_sync: bool = False, adopt: bool = False,
             n = remove_stale_locks(root)
             if n:
                 util.info(f"workspace: removed {n} stale git lock file(s)")
+        # App paths are relative to the AOSP root; repo's project paths to the workspace.
+        apps = [f"{ws['tree']}/{a}" if ws["tree"] else a for a in apps]
         for app in apps:          # earlier jobs leave MR commits / build leftovers in app projects
             repo = root / app
             if (repo / ".git").exists():
