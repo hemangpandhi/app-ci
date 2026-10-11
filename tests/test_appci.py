@@ -545,6 +545,41 @@ class Workspace(unittest.TestCase):
             with mock.patch.dict(os.environ, env), self.assertRaisesRegex(RuntimeError, "did not create"):
                 workspace.ensure(c, ["packages/apps/X"])
 
+    def test_adopts_tree_baked_into_the_image(self):
+        """workspace.adopt + sync.policy never: a tree the image carries is used as it is. No repo
+        init, no sync; app projects are still reset. --sync still forces one."""
+        import os
+        from unittest import mock
+        from appci import util, workspace
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d) / "build_env"
+            fake = Path(d) / "repo"
+            calls = Path(d) / "calls"
+            fake.write_text(f"#!/bin/sh\necho \"$*\" >> {calls}\n[ \"$1\" = manifest ] && echo '<manifest/>'\nexit 0\n")
+            fake.chmod(0o755)
+            (root / ".repo" / "manifests").mkdir(parents=True)          # synced by the image pipeline
+            app = root / "android" / "vendor" / "x" / "App"
+            app.mkdir(parents=True)
+            util.capture(["git", "init", "-q"], cwd=app)
+            (app / "leftover.txt").write_text("from an earlier job")
+            env = {"APPCI_PLATFORM": "p1", "APPCI_WORKSPACE": str(root)}
+            c, _ = self.cfg(env, workspace={"adopt": True, "tree": "android", "sync": {"policy": "never"},
+                                            "repo": {"command": str(fake)}})
+            with mock.patch.dict(os.environ, env):
+                st = workspace.ensure(c, ["vendor/x/App"])
+                self.assertFalse(st["synced_now"])
+                self.assertFalse(calls.exists())                          # neither init nor sync
+                self.assertFalse((app / "leftover.txt").exists())          # app project reset
+                self.assertIn("adopted_at", util.read_json(root / ".repo" / workspace.STATE))
+                st = workspace.ensure(c, [], force_sync=True)             # appci workspace --sync
+                self.assertTrue(st["synced_now"])
+                self.assertTrue(calls.read_text().startswith("sync "))
+            # without adopt the same tree is still refused
+            c, _ = self.cfg(env, workspace={"sync": {"policy": "never"}, "repo": {"command": str(fake)}})
+            (root / ".repo" / workspace.STATE).unlink()
+            with mock.patch.dict(os.environ, env), self.assertRaisesRegex(RuntimeError, "did not create"):
+                workspace.ensure(c, [])
+
     def test_interrupted_sync_recovers(self):
         """A cancelled job leaves git lock files; plain `repo sync` then fails. appci removes stale
         locks and retries with --force-sync, and an interrupted sync is redone even when not due."""

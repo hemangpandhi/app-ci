@@ -20,6 +20,12 @@ that into a tree the other commands can use:
   the manifest) and restores every project's files (`git reset --hard`). `--repair` forces this;
 * one process per workspace at a time (file lock; GitLab resource_group on top).
 
+Tree baked into the image: when the image already holds the synced tree (and a warm `out/`),
+point APPCI_WORKSPACE at it and set `workspace.adopt: true` (appci then manages the tree as it
+is, without `repo init`) and `sync.policy: never` (the image pipeline syncs; jobs only reset the
+app projects). Every job then starts in seconds, with no runner volume: the container's own
+copy-on-write layer takes the writes and is discarded with the job.
+
 When the manifest nests the platform in a subdirectory (projects at `android/...`), `workspace.tree`
 names it: the AOSP root is then `<workspace>/<tree>` and app paths stay relative to that root.
 
@@ -63,7 +69,7 @@ def resolve(cfg) -> Dict[str, Any]:
     ref = os.environ.get("APPCI_REPO_REFERENCE", ws.get("reference") or "")
     tree = str(ws.get("tree") or "").strip("/")
     return {"platform": name, "path": Path(path) if path else None, "seed": ws.get("seed", "copy"),
-            "tree": tree,
+            "tree": tree, "adopt": bool(ws.get("adopt")),
             "manifest": {k: manifest.get(k) for k in MANIFEST_KEYS},
             "local_manifests": list(plat.get("local_manifests") or ws.get("local_manifests") or []),
             "reference": Path(ref) if ref else None,
@@ -150,13 +156,19 @@ def ensure(cfg, apps: List[str], force_sync: bool = False, adopt: bool = False,
             _seed_copy(ws)
             state = {"seeded_from": str(ws["reference"]), "seeded_at": time.time()}
             util.write_json(state_file, state)
-        if initialized and not state and not adopt:
+        if initialized and not state and not (adopt or ws["adopt"]):
             raise RuntimeError(f"{root} is a repo tree appci did not create; refusing to manage it "
-                               "(it resets app projects). Use a dedicated path or pass --adopt.")
+                               "(it resets app projects). Use a dedicated path, pass --adopt, or set "
+                               "workspace.adopt: true for a tree baked into the image.")
         want = {k: (str(v) if v is not None else None) for k, v in m.items()}
         # The state file on the shared volume never holds a credential from the URL: compare a hash.
         want_state = dict(want, url=util.redact(want["url"]),
                           url_sha256=hashlib.sha256(want["url"].encode()).hexdigest())
+        if initialized and not state:
+            # Adopted as it is: the tree is taken to match the configured manifest (no repo init).
+            util.info(f"workspace: adopting the existing tree in {root}")
+            state = {"adopted_at": time.time(), "manifest": want_state}
+            util.write_json(state_file, state)
         synced = False
         if not initialized or state.get("manifest") != want_state:
             cmd = _repo_cmd(ws) + ["init", "-u", want["url"]]
@@ -182,8 +194,11 @@ def ensure(cfg, apps: List[str], force_sync: bool = False, adopt: bool = False,
         scfg = ws["sync"]
         age_h = (time.time() - state.get("synced_at", 0)) / 3600
         policy = scfg.get("policy", "if-older")
-        due = force_sync or "synced_at" not in state or policy == "always" or \
-            (policy == "if-older" and age_h >= float(scfg.get("max_age_hours", 12)))
+        if policy == "never":                 # the image pipeline syncs; jobs never do
+            due = force_sync
+        else:
+            due = force_sync or "synced_at" not in state or policy == "always" or \
+                (policy == "if-older" and age_h >= float(scfg.get("max_age_hours", 12)))
         interrupted = bool(state.get("sync_started")) or repair
         if interrupted:
             util.warn("workspace: repairing on request" if repair else
@@ -238,8 +253,10 @@ def ensure(cfg, apps: List[str], force_sync: bool = False, adopt: bool = False,
             snap = util.capture(_repo_cmd(ws) + ["manifest", "-r"], cwd=root)
             if snap.strip():
                 (root / ".repo" / "appci-pinned-manifest.xml").write_text(snap)
-        else:
+        elif "synced_at" in state:
             util.info(f"workspace: up to date (synced {age_h:.1f} h ago, policy {policy})")
+        else:
+            util.info("workspace: using the tree as it is (sync policy never)")
         state.update({"platform": ws["platform"], "path": str(root), "checked_at": time.time()})
         util.write_json(state_file, state)
         return {**state, "synced_now": synced}

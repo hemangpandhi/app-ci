@@ -193,7 +193,7 @@ for workspace, emulator and deploy settings → `--set key=value`.
 | `build_env_secrets` | secret-looking CI variables (e.g. `SECRET_PASS`) the build may see; all others are hidden from build, test and hook processes |
 | `targets.release` | the user build for prebuilt delivery (default: device target with `-user`, `out_user`) |
 | `java_home` | JDK for host tools (default `prebuilts/jdk/jdk21/linux-x86`; needs 17+) |
-| `workspace` | `path` (`/appci/{platform}`), `tree` (subdirectory holding the AOSP tree when the manifest nests it, e.g. `android`), `reference` (`/build_env`), `seed` (`copy`, `reference`, `none`), `sync.policy` (`if-older`, `always`), `sync.max_age_hours` (12) |
+| `workspace` | `path` (`/appci/{platform}`), `tree` (subdirectory holding the AOSP tree when the manifest nests it, e.g. `android`), `reference` (`/build_env`), `seed` (`copy`, `reference`, `none`), `adopt` (use a tree appci did not create, see 4.1), `sync.policy` (`if-older`, `always`, `never`), `sync.max_age_hours` (12) |
 | `stages.default` | stages run by `appci run` without `--stages` |
 | `stages.<stage>.gate` | `max_*` / `min_*` limits; `new_*` metrics count only changed lines |
 | `stages.preupload` | `skip_hooks`, `python`, `python_modules` |
@@ -272,6 +272,53 @@ apps:
   differ per platform.
 * appci has been validated end to end on Android 17 (AAOS). On other releases, run one pilot MR
   per platform first; lunch target names and `java_home` are the usual differences.
+
+### 4.1 Tree baked into the image (no runner volume)
+
+The runner volume (2.5) keeps one synced tree and a warm `out/` per platform on each machine, so
+only the first job on a machine pays for sync and a full build. The alternative is to bake that
+state into the platform image: the image pipeline syncs the tree and builds the apps once, and
+every job starts from the finished state. Nothing is configured on the runner, any machine runs
+any platform, and the disk holds one copy per platform per machine (the image), bounded and
+cleaned up by Docker. Each job writes into the container's copy-on-write layer, which is
+discarded with the job, so concurrent jobs never touch each other.
+
+In the image pipeline (Dockerfile, after `.repo` and the credentials are in place):
+
+```dockerfile
+ENV APPCI_WORKSPACE=/build_env APPCI_PLATFORM=a14
+# repo init + sync into /build_env, then a build of the apps so out/ is warm
+RUN git clone --depth 1 -b v1.0.0 https://gitlab.example.com/tools/aosp-app-ci /opt/appci \
+ && /opt/appci/bin/appci workspace \
+ && /opt/appci/bin/appci run --app vendor/xxx/apps/Media --stages build
+```
+
+`appci run --stages build` is optional: without it the tree is ready but build jobs start cold.
+With it, build jobs are incremental, at the cost of `out/` in the image (100 to 300 GB per
+platform). The lunch target, `OUT_DIR` and the environment must be the ones appci uses, which is
+why the build runs through appci; the same `appci.yaml` version is used in the image and in CI.
+
+Then, per platform in `appci.yaml`:
+
+```yaml
+platforms:
+  a14:
+    workspace:
+      tree: android              # when the manifest nests the tree
+      adopt: true                # the tree is already there; manage it as it is (no repo init)
+      sync: {policy: never}      # the image pipeline syncs; jobs only reset the app projects
+```
+
+and in the app project (or group) CI/CD variables `APPCI_WORKSPACE = /build_env`, which
+overrides the template's default `/appci/{platform}`. `appci workspace` then finishes in seconds:
+it resets the app projects and the stage checks the merge request commit out. The platform tree
+is as old as the image; rebuild the image on the schedule the platform needs (daily is typical).
+`appci workspace --sync` inside a container still forces a sync for a one-off check.
+
+If the image carries only `.repo` (no checked-out tree) and you do not want a volume, use
+`workspace: {seed: reference, sync: {jobs: 16}}` instead: `repo init --reference` borrows the
+image's objects without copying them, which removes the copy from every job; the checkout and a
+cold build remain.
 
 ## 5. Prebuilt delivery
 

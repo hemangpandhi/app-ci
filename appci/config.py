@@ -50,10 +50,12 @@ DEFAULTS: Dict[str, Any] = {
         "tree": "",                           # subdirectory holding the AOSP tree when the manifest nests it (e.g. android)
         "reference": "/build_env",            # .repo cache inside the platform image
         "seed": "copy",                       # copy | reference (git alternates) | none
+        "adopt": False,                       # manage a tree appci did not create (tree baked into the image)
         "repo": {"command": None},            # default: repo on PATH, else seeded from the cache
         "init_args": [],
         "local_manifests": [],
-        "sync": {"policy": "if-older", "max_age_hours": 12, "jobs": 8, "timeout": 4 * 3600,
+        "sync": {"policy": "if-older",        # if-older | always | never (tree baked into the image)
+                 "max_age_hours": 12, "jobs": 8, "timeout": 4 * 3600,
                  "args": None},               # None = -c --no-tags --optimized-fetch -d --retry-fetches=3
     },
     # Where reports/logs go. null = <aosp_root>/out/appci (pruned by Soong, wiped by `m clean`).
