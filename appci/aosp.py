@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shlex
 import subprocess
 import time
@@ -14,6 +15,7 @@ from .config import Config
 
 
 _passed_secrets_warned: set = set()
+_types_filled: set = set()               # jdeps files whose module types were completed
 
 
 def _warn_passed_secret(name: str, missing: bool = False) -> None:
@@ -158,12 +160,38 @@ class AospTree:
             if not res.ok:
                 raise RuntimeError(f"m module-info failed, see {log}\n{res.tail(30)}")
             _load_json.cache_clear()
+            _types_filled.clear()
 
     def module_info(self, target: str) -> Dict[str, dict]:
         return _load_json(str(self.module_info_path(target)))
 
     def jdeps(self, target: str) -> Dict[str, dict]:
-        return _load_json(str(self.jdeps_path(target)))
+        path = str(self.jdeps_path(target))
+        data = _load_json(path)
+        if path not in _types_filled:
+            _types_filled.add(path)
+            if data and not any(i.get("module_type") for i in data.values()):
+                self._fill_module_types(target, path, data)
+        return data
+
+    def _fill_module_types(self, target: str, path: str, data: Dict[str, dict]) -> None:
+        """Soong before Android 15 writes no module_type: take it from each module's Android.bp
+        (cached in the work dir against the jdeps file's mtime)."""
+        from . import blueprint
+        cache = self.cfg.workdir / "cache" / f"module_types.{util.slug(self.lunch(target))}.json"
+        mtime = os.path.getmtime(path)
+        cached = util.read_json(cache, {}) or {}
+        if cached.get("jdeps_mtime") == mtime and isinstance(cached.get("types"), dict):
+            for name, mtype in cached["types"].items():
+                if name in data:
+                    data[name].setdefault("module_type", mtype)
+            return
+        util.info("Soong wrote no module types (Android 14 or older); reading them from Android.bp files ...")
+        n = blueprint.fill_module_types(self.root, data)
+        util.info(f"module types read for {n} of {len(data)} modules")
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        util.write_json(cache, {"jdeps_mtime": mtime,
+                                "types": {k: v["module_type"] for k, v in data.items() if v.get("module_type")}})
 
     def intermediates(self, target: str, module_path: str, module: str) -> Path:
         return self.out_dir(target) / "soong" / ".intermediates" / module_path / module

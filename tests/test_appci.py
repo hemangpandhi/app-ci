@@ -835,3 +835,58 @@ class DiscoveryVendorTypes(unittest.TestCase):
         self.assertIn("Soong lists no module under vendor/x/apps/Media", text)
         self.assertIn("vendor/x/apps/Media/Media/Android.bp", text)
         self.assertIn("MediaPrebuilt (android_app_import, vendor/x/prebuilts/Media)", text)
+
+
+class BlueprintModuleTypes(unittest.TestCase):
+    """Android 14 Soong writes no module_type into module_bp_java_deps.json: appci reads the type
+    from Android.bp, resolving soong_config_module_type wrappers to the Soong type they wrap."""
+
+    def test_types_from_android_bp_with_custom_types(self):
+        from appci import blueprint
+        with tempfile.TemporaryDirectory() as root:
+            r = Path(root)
+            (r / "vendor" / "x" / "soong").mkdir(parents=True)
+            (r / "vendor" / "x" / "soong" / "Android.bp").write_text(
+                'soong_config_module_type {\n    name: "x_car_app",\n    module_type: "android_app",\n'
+                '    config_namespace: "x",\n    variables: ["flavor"],\n    properties: ["srcs"],\n}\n')
+            d = r / "vendor" / "x" / "apps" / "Media" / "Media"
+            d.mkdir(parents=True)
+            (d / "Android.bp").write_text(
+                '// the app\nsoong_config_module_type_import {\n    from: "vendor/x/soong/Android.bp",\n'
+                '    module_types: ["x_car_app"],\n}\n\n'
+                'x_car_app {\n    name: "XCarMediaApp",\n    srcs: ["src/**/*.java"],\n'
+                '    optimize: { enabled: false },\n}\n\n'
+                'android_library {\n    name: "XCarMediaLib",\n    srcs: ["lib/**/*.kt"],\n}\n\n'
+                'android_test {\n    name: "XCarMediaTests",\n}\n')
+            types = blueprint.module_types(root, str(d / "Android.bp"))
+            self.assertEqual(types, {"XCarMediaApp": "android_app", "XCarMediaLib": "android_library",
+                                     "XCarMediaTests": "android_test"})
+            jdeps = {"XCarMediaApp": {"path": ["vendor/x/apps/Media/Media"], "srcs": []},
+                     "XCarMediaLib": {"path": ["vendor/x/apps/Media/Media"]},
+                     "Elsewhere": {"path": ["packages/apps/None"]}}
+            self.assertEqual(blueprint.fill_module_types(r, jdeps), 2)
+            self.assertEqual(jdeps["XCarMediaApp"]["module_type"], "android_app")
+            self.assertNotIn("module_type", jdeps["Elsewhere"])
+
+    def test_tree_fills_types_once_and_caches(self):
+        from appci import aosp
+        from appci.aosp import AospTree
+        from appci.config import Config
+        with tempfile.TemporaryDirectory() as root:
+            r = Path(root)
+            cfg = Config({"aosp_root": root, "workdir": root + "/wd",
+                          "targets": {"device": {"lunch": "x-userdebug", "out_dir": "out", "env": {}}}}, None)
+            tree = AospTree(cfg)
+            (r / "out" / "soong").mkdir(parents=True)
+            (r / "packages" / "apps" / "A").mkdir(parents=True)
+            (r / "packages" / "apps" / "A" / "Android.bp").write_text('android_app {\n    name: "A",\n}\n')
+            jd = r / "out" / "soong" / "module_bp_java_deps.json"
+            jd.write_text(json.dumps({"A": {"path": ["packages/apps/A"]}}))
+            aosp._load_json.cache_clear(); aosp._types_filled.clear()
+            self.assertEqual(tree.jdeps("device")["A"]["module_type"], "android_app")
+            cache = json.loads((r / "wd" / "cache" / "module_types.x-userdebug.json").read_text())
+            self.assertEqual(cache["types"], {"A": "android_app"})
+            # next process: the cache is used, no Android.bp needed any more
+            (r / "packages" / "apps" / "A" / "Android.bp").unlink()
+            aosp._load_json.cache_clear(); aosp._types_filled.clear()
+            self.assertEqual(tree.jdeps("device")["A"]["module_type"], "android_app")
