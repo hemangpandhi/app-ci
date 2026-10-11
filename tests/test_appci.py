@@ -708,3 +708,35 @@ class BuildEnvSecrets(unittest.TestCase):
             self.assertEqual(env.get("SECRET_PASS"), "zip-pw")                # listed: passed
             self.assertNotIn("OTHER_TOKEN", env)                              # others stay hidden
             util._SECRETS.clear()
+
+
+class ModuleInfoFallback(unittest.TestCase):
+    def test_file_target_when_phony_missing(self):
+        from unittest import mock
+        from appci import util
+        from appci.aosp import AospTree
+        from appci.config import Config
+        with tempfile.TemporaryDirectory() as root:
+            cfg = Config({"aosp_root": root, "workdir": root + "/wd",
+                          "targets": {"device": {"lunch": "x-userdebug", "out_dir": "out", "env": {}}}}, None)
+            tree = AospTree(cfg)
+            pout = Path(root) / "out" / "target" / "product" / "dev"
+            calls = []
+
+            def fake_m(target, modules, log, **kw):
+                calls.append(list(modules))
+                log.parent.mkdir(parents=True, exist_ok=True)
+                if modules == ["module-info"]:
+                    log.write_text("...\nFAILED: ninja: unknown target 'module-info'\n")
+                    return util.CommandResult("m module-info", 1, log, 0.0)
+                pout.mkdir(parents=True, exist_ok=True)
+                (pout / "module-info.json").write_text("{}")
+                (Path(root) / "out" / "soong").mkdir(parents=True, exist_ok=True)
+                (Path(root) / "out" / "soong" / "module_bp_java_deps.json").write_text("{}")
+                log.write_text("ok\n")
+                return util.CommandResult("m", 0, log, 0.0)
+            with mock.patch.object(tree, "m", side_effect=fake_m), \
+                    mock.patch.object(tree, "product_out", return_value=pout), \
+                    mock.patch.object(tree, "lock", return_value=mock.MagicMock(__enter__=lambda s: None, __exit__=lambda s, *a: False)):
+                tree.ensure_metadata("device")
+            self.assertEqual(calls, [["module-info"], ["out/target/product/dev/module-info.json"]])

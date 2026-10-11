@@ -140,6 +140,17 @@ class AospTree:
             log = self.cfg.workdir / "logs" / f"module-info-{util.slug(target)}.log"
             with self.lock(target):
                 res = self.m(target, ["module-info"], log)
+                if not res.ok and "unknown target 'module-info'" in res.tail(40):
+                    # Some vendor trees drop the phony target; the file's own rule still exists
+                    # (and in newer trees Soong writes it during analysis, so `m nothing` suffices).
+                    rel = self.module_info_path(target).relative_to(self.root)
+                    util.info(f"no `module-info` target in this tree; building {rel} directly")
+                    res = self.m(target, [str(rel)], log, append=True)
+                    if not res.ok and "unknown target" in res.tail(40):
+                        res = self.m(target, ["nothing"], log, append=True)
+                        if res.ok and not self.module_info_path(target).exists():
+                            raise RuntimeError(f"this tree produces no {rel}; appci needs module-info.json "
+                                               f"(see {log})")
             if not res.ok:
                 raise RuntimeError(f"m module-info failed, see {log}\n{res.tail(30)}")
             _load_json.cache_clear()
