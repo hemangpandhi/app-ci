@@ -1009,3 +1009,78 @@ class JdkResolution(unittest.TestCase):
                 self.assertEqual(cfg.java_home, j17.parent)
             cfg = Config({"aosp_root": root, "java_home": "prebuilts/jdk/jdk17/linux-x86", "targets": {}}, None)
             self.assertEqual(cfg.java_home, j17.parent)                 # configured one wins when present
+
+
+class BuildVariants(unittest.TestCase):
+    """Every build delivers <Module>-debug.apk from the userdebug (device) target and
+    <Module>-release.apk from the user (release) target, each built in its own OUT_DIR."""
+
+    def _run(self, root, scfg_extra=None, fail_target=None):
+        from types import SimpleNamespace
+        from appci import util
+        from appci.aosp import AospTree
+        from appci.config import DEFAULTS, Config, deep_merge
+        from appci.context import RunContext
+        from appci.model import StageResult
+        from appci.stages.build import BuildStage
+        cfg = Config(deep_merge(DEFAULTS, {
+            "aosp_root": root, "workdir": root + "/wd",
+            "targets": {"device": {"lunch": "p_car-userdebug", "out_dir": "out", "env": {}}},
+            "stages": {"build": {"include_tests": False, **(scfg_extra or {})}}}), None)
+        tree = AospTree(cfg)
+        builds = []
+
+        def fake_m(target, modules, log, **kw):
+            builds.append((target, list(modules)))
+            log.parent.mkdir(parents=True, exist_ok=True)
+            if target == fail_target:
+                log.write_text("FAILED: out_user/.../X.apk\nerror: boom\n")
+                return util.CommandResult("m", 1, log, 0.0)
+            out = Path(root) / tree.out_dir(target).name / "target" / "product" / "p"
+            apk = out / "system" / "priv-app" / "X" / "X.apk"
+            apk.parent.mkdir(parents=True, exist_ok=True)
+            apk.write_bytes(tree.lunch(target).encode())
+            (out / "module-info.json").write_text(json.dumps(
+                {"X": {"installed": [str(apk.relative_to(root))], "class": ["APPS"]}}))
+            (out.parents[2] / "soong").mkdir(parents=True, exist_ok=True)
+            (out.parents[2] / "soong" / "module_bp_java_deps.json").write_text("{}")
+            log.write_text("ok\n")
+            return util.CommandResult("m", 0, log, 0.0)
+        profile = SimpleNamespace(path="vendor/x/X", name="X", slug="x", apps=["X"], tests=[], libs=[],
+                                  prod_modules=["X"])
+        impact = SimpleNamespace(dependents=[], dependents_truncated=[])
+        ctx = RunContext(cfg=cfg, tree=tree, profile=profile, entry={"path": "vendor/x/X"},
+                         report_root=Path(root) / "reports", _impact=impact)
+        res = StageResult(stage="build", app="x")
+        with mock.patch.object(tree, "m", side_effect=fake_m), \
+                mock.patch.object(tree, "product_out", side_effect=lambda t: Path(root) / tree.out_dir(t).name / "target" / "product" / "p"), \
+                mock.patch.object(tree, "lock", return_value=mock.MagicMock(__enter__=lambda s: None, __exit__=lambda s, *a: False)):
+            BuildStage().run(ctx, res)
+        return res, builds, ctx.app_dir / "build" / "apks"
+
+    def test_debug_and_release_apks_from_their_lunch_targets(self):
+        from appci.model import PASSED
+        with tempfile.TemporaryDirectory() as root:
+            res, builds, apks = self._run(root)
+            self.assertEqual(res.status, PASSED, res.summary)
+            self.assertEqual(sorted(p.name for p in apks.iterdir()), ["X-debug.apk", "X-release.apk"])
+            self.assertEqual((apks / "X-debug.apk").read_bytes(), b"p_car-userdebug")   # userdebug lunch target
+            self.assertEqual((apks / "X-release.apk").read_bytes(), b"p_car-user")     # user lunch target, OUT_DIR out_user
+            self.assertEqual(builds, [("device", ["X", "jacocoagent", "jacoco-cli"]), ("release", ["X"])])
+            self.assertEqual(res.metrics["variants"], {"debug": "p_car-userdebug", "release": "p_car-user"})
+            self.assertEqual(sorted(res.metrics["apk_bytes"]), ["X-debug.apk", "X-release.apk"])
+
+    def test_release_build_failure_fails_the_stage(self):
+        from appci.model import FAILED
+        with tempfile.TemporaryDirectory() as root:
+            res, builds, apks = self._run(root, fail_target="release")
+            self.assertEqual(res.status, FAILED)
+            self.assertTrue(res.summary.startswith("release (p_car-user): FAILED: out_user/"), res.summary)
+            self.assertIn("build log (release)", res.reports)
+
+    def test_explicit_release_target_and_legacy_extra_targets(self):
+        from appci.model import PASSED
+        with tempfile.TemporaryDirectory() as root:
+            res, builds, apks = self._run(root, {"variants": {"debug": "device"}, "extra_targets": ["release"]})
+            self.assertEqual(res.status, PASSED, res.summary)
+            self.assertEqual(sorted(p.name for p in apks.iterdir()), ["X-debug.apk", "X-release.apk"])

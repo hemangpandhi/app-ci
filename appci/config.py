@@ -80,9 +80,13 @@ DEFAULTS: Dict[str, Any] = {
     },
     "stages": {
         "default": DEFAULT_STAGES,
-        # extra_targets: also build the app for these targets (e.g. "release" = the user variant),
-        # each in its own OUT_DIR; APKs are collected as <name>-<target>.apk.
-        "build": {"target": "device", "include_tests": True, "extra_modules": [], "extra_targets": [],
+        # variants: suffix -> target. The app is built for every target listed, each in its own
+        # OUT_DIR, and its APKs are collected as <Module>-<suffix>.apk: <Module>-debug.apk from the
+        # device (userdebug) lunch target, <Module>-release.apk from the release (user) lunch target
+        # (targets.release; default: the device target as -user). Tests and dependents are built
+        # only for `target`. extra_targets (older configs) adds targets with the target name as suffix.
+        "build": {"target": "device", "include_tests": True, "extra_modules": [],
+                  "variants": {"debug": "device", "release": "release"}, "extra_targets": [],
                   "timeout": 14400},
         # Gates on `new_*` metrics only apply when the change under test is known
         # (MR pipelines / --changed-since); full scans then just report.

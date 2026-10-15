@@ -12,7 +12,7 @@ product) and runs:
 | Job | What it checks | Blocks the merge when |
 |---|---|---|
 | `preupload` | the project's `PREUPLOAD.cfg` hooks (as `repo upload` would) | a hook fails |
-| `build` | the app, its test modules and apps that depend on a changed library | the build fails |
+| `build` | the app (as `<Module>-debug.apk` on the userdebug target and `<Module>-release.apk` on the user target), its test modules and apps that depend on a changed library | a build fails |
 | `risk` | manifest, permissions, `Android.bp`, aconfig flags, secrets, APK size, API files | a blocker (see below) |
 | `lint` | Android Lint (Soong) | a **new error on a line you changed** |
 | `checkstyle` | Java style (AOSP `android-style.xml`) | a **new error on a line you changed** |

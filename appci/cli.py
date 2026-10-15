@@ -39,7 +39,7 @@ def _cfg(args) -> Config:
 
 
 def _parse_set(item: str) -> dict:
-    """`stages.build.extra_targets=[release]` -> nested override dict (value parsed as YAML)."""
+    """`stages.build.include_tests=false` -> nested override dict (value parsed as YAML)."""
     key, sep, raw = item.partition("=")
     if not sep or not key:
         raise SystemExit(f"--set expects key=value, got: {item}")
@@ -434,7 +434,7 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--platform", default=argparse.SUPPRESS,
                    help="platform in appci.yaml `platforms` (default: $APPCI_PLATFORM)")
     g.add_argument("--set", action="append", default=argparse.SUPPRESS, metavar="KEY=VALUE",
-                   help="override any config value, e.g. stages.build.extra_targets=[release] (repeatable)")
+                   help="override any config value, e.g. stages.build.include_tests=false (repeatable)")
     p = argparse.ArgumentParser(prog="appci", parents=[common],
                                 description="CI/QA pipeline for AOSP / AAOS system apps")
     sub = p.add_subparsers(dest="cmd", required=True)

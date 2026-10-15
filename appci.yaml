@@ -10,9 +10,13 @@ targets:
     lunch: sdk_car_x86_64-trunk_staging-userdebug
     out_dir: out_appci_emu
     coverage: true
+  # release:                         # user build: <Module>-release.apk in every build job, `user` prebuilt
+  #   lunch: aosp_tangorpro_car-trunk_staging-user   # default: the device lunch target with -user
+  #   out_dir: out_user
 
 stages:
   default: [preupload, build, risk, lint, checkstyle, ktlint, detekt, unit_test, device_test, coverage, docs, sonar]
+  # build: {variants: {debug: device, release: release}}   # APK suffix -> target (default)
   lint:       {gate: {max_new_errors: 0}}   # new_* gates count only lines the change touches
   checkstyle: {gate: {max_new_errors: 0}}
   ktlint:     {gate: {max_new_errors: 0}}

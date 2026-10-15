@@ -191,7 +191,7 @@ for workspace, emulator and deploy settings → `--set key=value`.
 | `platforms.<name>.<any key>` | overrides for that platform (targets, `java_home`, stages, apps) |
 | `targets.device` / `targets.emulator` | lunch target and `out_dir`; the emulator target builds with coverage |
 | `build_env_secrets` | secret-looking CI variables (e.g. `SECRET_PASS`) the build may see; all others are hidden from build, test and hook processes |
-| `targets.release` | the user build for prebuilt delivery (default: device target with `-user`, `out_user`) |
+| `targets.release` | the user build: `<Module>-release.apk` in every build job and the `user` prebuilt in delivery (default: device target with `-user`, `out_user`) |
 | `java_home` | JDK for host tools (default `prebuilts/jdk/jdk21/linux-x86`; needs 17+; when missing in the tree, the newest JDK the tree ships is used, e.g. jdk17 on Android 14) |
 | `workspace` | `path` (`/appci/{platform}`), `tree` (subdirectory holding the AOSP tree when the manifest nests it, e.g. `android`), `reference` (`/build_env`), `seed` (`copy`, `reference`, `none`), `adopt` (use a tree appci did not create, see 4.1), `sync.policy` (`if-older`, `always`, `never`), `sync.max_age_hours` (12) |
 | `discovery.extra_prod_types` | vendor module types (`soong_config_module_type`, e.g. `xxx_car_app`) treated like `android_app`; when nothing under an app path counts as production code, the job log lists what Soong recorded there and why it was skipped |
@@ -200,6 +200,7 @@ for workspace, emulator and deploy settings → `--set key=value`.
 | `stages.preupload` | `skip_hooks`, `python`, `python_modules` |
 | `stages.unit_test`, `stages.device_test` | `atest_args`, `timeout`; device: `mode` (`emulator`, `device`), `missing_image` (`warn`, `error`) |
 | `stages.coverage` | `min_new_lines_for_gate` (10) and the gate |
+| `stages.build` | `variants` (APK suffix → target; default `{debug: device, release: release}`: every build job delivers `<Module>-debug.apk` from the userdebug target and `<Module>-release.apk` from the user target, each in its own `OUT_DIR`), `include_tests`, `extra_modules`, `timeout` |
 | `stages.sonar` | `project_key_prefix`, `project_key_suffix`, `pull_request_analysis` |
 | `stages.deploy` | section 5 |
 | `emulator` | `image` and `program` `{url, pattern}`, `require_checksum` |

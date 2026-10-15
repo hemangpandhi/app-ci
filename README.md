@@ -9,7 +9,7 @@ for what the change itself breaks. The same command runs on a developer's machin
 | Stage | Tool |
 |---|---|
 | preupload | the project's `PREUPLOAD.cfg` repo hooks |
-| build | Soong (`m`), like the product build |
+| build | Soong (`m`), like the product build; `<Module>-debug.apk` (userdebug target) and `<Module>-release.apk` (user target) |
 | risk | permissions, privapp allowlist, `Android.bp`, aconfig flags, secrets, APK size |
 | lint, checkstyle, ktlint, detekt | Android Lint, Checkstyle, ktlint, Detekt |
 | unit_test, device_test | `atest`: Robolectric and host tests; instrumented tests on an emulator |

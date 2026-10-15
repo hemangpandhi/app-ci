@@ -388,7 +388,8 @@ class RiskStage(Stage):
             return
         worst_pct, worst_bytes, rows = 0.0, 0, []
         for name, size in current.items():
-            old = base.get(name)
+            # Baselines written before variants: the userdebug APK was <Module>.apk.
+            old = base.get(name) or (base.get(name[:-len("-debug.apk")] + ".apk") if name.endswith("-debug.apk") else None)
             if not old:
                 continue
             pct = round(100.0 * (size - old) / old, 2)

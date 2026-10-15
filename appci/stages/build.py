@@ -4,6 +4,7 @@ from __future__ import annotations
 import re
 import shutil
 
+from ..aosp import _load_json
 from ..model import ERROR, FAILED, PASSED
 from . import Stage, register
 
@@ -24,6 +25,15 @@ def diagnose(text: str) -> str:
 
 def build_error_lines(text: str, limit: int = 25):
     return [l for l in text.splitlines() if ERR_RE.search(l)][:limit]
+
+
+def build_variants(scfg) -> dict:
+    """APK suffix -> target. stages.build.variants (default debug: device, release: release), plus the
+    older extra_targets list (suffix = target name)."""
+    out = dict(scfg.get("variants") or {})
+    for extra in scfg.get("extra_targets") or []:
+        out.setdefault(extra, extra)
+    return out
 
 
 @register
@@ -73,33 +83,40 @@ class BuildStage(Stage):
             res.summary = errors[0][:200] if errors else f"m exited with {cmd.returncode}"
             res.metrics["errors"] = len(errors)
             return
-        # Collect the APKs that end up in the image.
-        minfo = ctx.tree.module_info(target)
+        # Collect the APKs that end up in the image, one per variant: <Module>-debug.apk from the
+        # device (userdebug) target, <Module>-release.apk from the release (user) target. Variants
+        # on another target than the main build get the app modules built there (own OUT_DIR).
         apk_dir = d / "apks"
         apk_dir.mkdir(exist_ok=True)
         sizes = {}
-        for m in p.apps:
-            for inst in (minfo.get(m) or {}).get("installed") or []:
-                src = ctx.cfg.aosp_root / inst
-                if inst.endswith(".apk") and src.is_file():
-                    shutil.copy2(src, apk_dir / src.name)
-                    sizes[src.name] = src.stat().st_size
-        for extra in scfg.get("extra_targets") or []:
-            elog = d / f"build-{extra}.log"
-            with ctx.tree.lock(extra):
-                ecmd = ctx.tree.m(extra, p.apps, elog, timeout=scfg.get("timeout"))
-            if not ecmd.ok:
-                errs = build_error_lines(ecmd.output())
-                res.status = FAILED
-                res.summary = f"{extra} ({ctx.tree.lunch(extra)}): " + (errs[0][:180] if errs else "build failed")
-                res.reports[f"build log ({extra})"] = ctx.rel_report(elog)
-                return
-            emi = ctx.tree.module_info(extra)
+        variants = build_variants(scfg)
+        res.metrics["variants"] = {suffix: ctx.tree.lunch(t) for suffix, t in variants.items()}
+        for suffix, vtarget in variants.items():
+            if vtarget != target:
+                vlog = d / f"build-{suffix}.log"
+                with ctx.tree.lock(vtarget):
+                    vcmd = ctx.tree.m(vtarget, p.apps, vlog, timeout=scfg.get("timeout"))
+                res.reports[f"build log ({suffix})"] = ctx.rel_report(vlog)
+                if not vcmd.ok:
+                    errs = build_error_lines(vcmd.output())
+                    (d / f"errors-{suffix}.txt").write_text("\n".join(errs))
+                    res.reports[f"errors ({suffix})"] = ctx.rel_report(d / f"errors-{suffix}.txt")
+                    res.status = FAILED
+                    res.summary = f"{suffix} ({ctx.tree.lunch(vtarget)}): " + (errs[0][:180] if errs else "build failed")
+                    return
+                _load_json.cache_clear()             # module-info.json of this OUT_DIR was just rewritten
+                try:
+                    ctx.tree.ensure_metadata(vtarget)   # older trees write it only with `m module-info`
+                except RuntimeError as exc:
+                    res.status = ERROR
+                    res.summary = f"{suffix} ({ctx.tree.lunch(vtarget)}): {exc}"[:300]
+                    return
+            minfo = ctx.tree.module_info(vtarget)
             for m in p.apps:
-                for inst in (emi.get(m) or {}).get("installed") or []:
+                for inst in (minfo.get(m) or {}).get("installed") or []:
                     src = ctx.cfg.aosp_root / inst
                     if inst.endswith(".apk") and src.is_file():
-                        dst = apk_dir / f"{src.stem}-{extra}.apk"
+                        dst = apk_dir / f"{src.stem}-{suffix}.apk"
                         shutil.copy2(src, dst)
                         sizes[dst.name] = dst.stat().st_size
         res.metrics["apk_bytes"] = sizes
