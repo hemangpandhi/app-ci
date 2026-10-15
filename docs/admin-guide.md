@@ -200,18 +200,38 @@ for workspace, emulator and deploy settings → `--set key=value`.
 | `discovery.extra_prod_types` | vendor module types (`soong_config_module_type`, e.g. `xxx_car_app`) treated like `android_app`; when nothing under an app path counts as production code, the job log lists what Soong recorded there and why it was skipped |
 | `stages.default` | stages run by `appci run` without `--stages` |
 | `stages.<stage>.gate` | `max_*` / `min_*` limits; `new_*` metrics count only changed lines |
-| `stages.build` | `variants` (APK suffix → target; default `{debug: device, release: release}`: every build job delivers `<Module>-debug.apk` from the userdebug target and `<Module>-release.apk` from the user target, each in its own `OUT_DIR`), `include_tests`, `extra_modules`, `timeout` |
-| `stages.preupload` | `skip_hooks`, `python`, `python_modules` |
-| `stages.unit_test`, `stages.device_test` | `atest_args`, `timeout`; device: `mode` (`emulator`, `device`), `missing_image` (`warn`, `error`) |
-| `stages.coverage` | `min_new_lines_for_gate` (10) and the gate |
-| `stages.sonar` | `project_key_prefix`, `project_key_suffix`, `pull_request_analysis` |
-| `stages.deploy` | section 5; `path` placeholders `{name}`, `{slug}`, `{app}`, `{platform}` |
+| `stages.<stage>` | every setting of every stage, with defaults: 3.1 (`stages.deploy`: section 5) |
 | `emulator` | `image` and `program` `{url, pattern}`, `require_checksum` |
 | `discovery.scan_roots` | where `appci discover --scan` looks for apps |
 | `gitlab` | `appci_project`, `appci_version`, `volume`, `build_tags`, `emulator_tags`, `timeouts`, `allow_failure` |
 | `tools.<name>` | `url` (internal copy) or `path` (installed tool) for a pinned tool |
 | `downloads` | `verify_tls`, `wheel_base_url` |
 | `apps[]` | `path`, `enabled`, per-app `stages` overrides |
+
+### 3.1 Stage settings
+
+Every key below can be set for all apps (`stages.<stage>.<key>`), for one platform
+(`platforms.<name>.stages.<stage>.<key>`), for one app (`apps[].stages.<stage>.<key>`) or for one
+run (`--set stages.<stage>.<key>=value`). Durations are seconds. Gates are `max_<metric>` /
+`min_<metric>` on the stage's metrics; a metric the run does not produce is not gated, and the
+`new_*` metrics count only lines the change touches (section 6 of the architecture guide).
+
+| Stage | Settings (default) | Gate (default) | Produces |
+|---|---|---|---|
+| `build` | `target` (`device`); `variants` (`{debug: device, release: release}`: APK suffix → target, each target built in its own `OUT_DIR`, so `<Module>-debug.apk` comes from the userdebug and `<Module>-release.apk` from the user lunch target); `include_tests` (`true`: the app's test modules are built too); `extra_modules` (`[]`: more modules to build on `target`); `extra_targets` (`[]`: older form of `variants`, suffix = target name); `timeout` (14400) | none: a failed build fails the stage | `build.log`, `build-<suffix>.log`, `errors.txt`, `apks/<Module>-<suffix>.apk`; metrics `apk_bytes`, `variants` |
+| `preupload` | `runner` (`tools/repohooks/pre-upload.py`); `skip_hooks` (`[commit_msg_changeid_field]`: hooks disabled in the scratch copy of `PREUPLOAD.cfg`); `project` (`null` = the app path, the repo project name hooks see); `python` (`null` = auto: a CPython 3.9+ with the listed modules, trying the host's `python3`, then a pinned standalone CPython from the tools cache, then the tree's prebuilt); `python_modules` (`[lxml==5.3.0]`: fetched as checked wheels when the interpreter lacks them, never pip-installed); `jobs` (4); `max_commits` (50: newest commits of the change the hooks run on); `timeout` (1800) | `max_hooks_failed` 0 | hook log, findings (Code Quality widget), `hook environment errors` when a hook failed for lack of a tool rather than because of the change |
+| `risk` | `permission_sources` (manifests whose `protectionLevel` tells which permissions are privileged: `frameworks/base/core/res/AndroidManifest.xml`, `packages/services/Car/service/AndroidManifest.xml`); `min_code_lines_without_tests` (20: production lines changed without a test change before a review item is raised); `baseline_dir` (`null`: target-branch reports for the APK size comparison; CI sets `APPCI_BASELINE_DIR` from `appci fetch-baseline`); `api_check` (`true`: Soong API check of the app's `java_sdk_library` modules when they changed) | `max_blockers` 0; `max_apk_growth_pct` 10; `max_review_items` `null` (not gated) | `risk report` (HTML and Markdown), `api check log`. Blockers: privileged permission missing from the privapp allowlist, new aconfig flag without namespace/description/bug, high-confidence secret on an added line, failed API check. Review items: new permissions, exported components, `sharedUserId`, `Android.bp` dependency or privilege changes, possible secrets, production code without test changes |
+| `lint` | `target` (`device`); `modules` (`null` = the app's production modules); `timeout` (7200). Nothing is declared in the app: `<module>-lint` is a target Soong generates per module; older trees get the report file built directly | `max_new_errors` 0 | `<module>.xml`, `<module>.html` per module |
+| `checkstyle` | `config` (`prebuilts/checkstyle/android-style.xml`); `jar` (`prebuilts/checkstyle/checkstyle.jar`); `include_tests` (`false`) | `max_new_errors` 0 | `checkstyle.xml`, `checkstyle.html` |
+| `ktlint` | `jar` (`prebuilts/ktlint/ktlint-android-all.jar`); `editorconfig` (`prebuilts/ktlint/.editorconfig`); `include_tests` (`true`) | `max_new_errors` 0 (ktlint findings are warnings, so it never trips) | `ktlint.xml`, `ktlint.html` |
+| `detekt` | `config` (`config/detekt.yml` in appci); `baseline` (`{tool}/baselines/{slug}/detekt-baseline.xml`, placeholders `{tool}` = appci root, `{app}` = app path, `{slug}`; `appci baseline --app P` recreates it); `include_tests` (`true`) | `max_new_errors` 0 | `detekt.sarif`, `detekt.html` |
+| `unit_test` | `target` (`device`); `coverage` (`true`: Tradefed attaches the JaCoCo agent); `atest_args` (`[]`: appended to every `atest` call); `timeout` (10800) | `max_failed` 0 | `junit.xml`, `tests.html`, `coverage <suite> (html)`, `jacoco.xml` |
+| `device_test` | `target` (`emulator`); `mode` (`emulator`: boot appci's emulator; `device`: use a connected device); `serial` (`null` = `$ANDROID_SERIAL`, `mode: device` only); `emulator_port` (5580); `emulator_args` (`-no-window -no-audio -no-boot-anim -no-snapshot -wipe-data -gpu swiftshader_indirect -memory 6144 -cores 4`); `boot_timeout` (900); `missing_image` (`warn`: tests reported *not run*, MR not blocked; `error`: job fails); `install_apps` (`true`: the coverage build of the app is `adb install`ed over the system app before the tests); `coverage` (`true`, needs `targets.emulator.coverage`); `atest_args` (`[]`); `timeout` (10800) | `max_failed` 0 | `junit.xml`, `tests.html`, `tradefed logs`, `coverage (html)`, `jacoco.xml`; metrics `serial`, `build_fingerprint`, `emulator_image` |
+| `coverage` | `min_new_lines_for_gate` (10: the changed-line gate applies only from this many changed executable lines) | `min_line` `null` (not gated); `min_new_line` 50 | `coverage.html`, `cobertura.xml` (MR diff annotations), `sonar-coverage.xml`, `uncovered new lines` |
+| `docs` | `javadoc` (`true`); `uml` (`true`: PlantUML class diagrams rendered to SVG); `kotlin` (`true`: Dokka); `visibility` (`protected`: Javadoc's `-public`, `-protected`, `-package` or `-private`); `timeout` (3600) | none | `javadoc`, `class diagrams`, `kotlin docs`, `javadoc excluded files` |
+| `sonar` | `host_url_env` (`[SONAR_HOST_URL, SONARQUBE_HOST_URL]`); `token_env` (`SONAR_TOKEN`); `project_key_prefix` (`aosp-`); `project_key_suffix` (`""`, e.g. `-a14` per platform); `pull_request_analysis` (`false`; `true` needs SonarQube Developer Edition or the community branch plugin); `wait_quality_gate` (`false`); `legacy_issue_format` (`false`; `true` for SonarQube before 10.3); `extra_properties` (`{}`: more `sonar.*` properties) | none | `sonar-project.properties`, link to the SonarQube dashboard. Skipped when the host URL or token is not set |
+| `image` | `target` (`emulator`); `timeout` (21600) | none | the system images in the emulator target's `OUT_DIR` (`appci image`, job `emulator_image`) |
+| `deploy` | section 5 | none | `commit message`, `delivered files` |
 
 **CI variables**
 
@@ -424,12 +444,21 @@ stages:
     repo: https://gitlab.example.com/prebuilts/apps.git
     branch: main
     path: "{name}"            # folder per app: CarSettings/, ...; "{platform}/{name}" when platforms share the repo
-    mode: mr                  # mr or push
-    certificate: platform     # or presigned: true
+    mode: mr                  # mr (merge request), push (straight to branch) or local (commit only, for testing)
+    variants: {user: release, userdebug: device}   # folder in the delivery -> target that builds it
+    certificate: platform     # android_app_import certificate; or presigned: true
+    prefer: false             # true only when the tree keeps the source app and the prebuilt must win
+    dex_preopt: true          # dex_preopt { enabled: ... } of the android_app_import
     author_name: CI Bot
     author_email: ci-bot@example.com
+    token_env: APPCI_DEPLOY_TOKEN   # CI variable holding the prebuilts project token
+    timeout: 14400
     # overrides: [CarSettings]   # default: read from the app's Android.bp / Android.mk
+    # version: v1.2.0            # default: $CI_COMMIT_TAG, else `git describe --tags`
 ```
+
+`APPCI_DEPLOY_REPO`, `APPCI_DEPLOY_BRANCH` and `APPCI_DEPLOY_MODE` override `repo`, `branch` and
+`mode` from CI variables.
 
 Setup per prebuilts repository and app project:
 

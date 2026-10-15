@@ -24,6 +24,8 @@ product) and runs:
 | `docs` | Javadoc, class diagrams, Dokka (manual on MRs) | never |
 | `sonar` | SonarQube analysis (default branch) | never on MRs |
 | `report` | the dashboard | — |
+| `emulator_image` | builds the emulator image in the tree (manual on MRs; nightly schedule) | never |
+| `deploy` | prebuilt delivery, release tags only (see *Releasing a prebuilt*) | the tag pipeline fails when a variant does not build |
 
 **Warnings never block, and neither do findings in code you did not touch.** Legacy code with
 hundreds of existing findings can be changed safely: only what your MR adds or modifies counts.

@@ -131,14 +131,14 @@ time); appci also locks the workspace and each `OUT_DIR`. Each job uploads only 
 |---|---|---|---|
 | preupload | AOSP repohooks on the MR's commits (Python 3.9+; a pinned standalone CPython and lxml wheel when the image has none) | hook log, findings | no failed hook |
 | build | `m <apps> <tests> jacocoagent jacoco-cli` on the userdebug target, `m <apps>` on the user target | build logs, `<Module>-debug.apk` and `<Module>-release.apk` | both builds succeed |
-| risk | appci: manifest, privapp allowlist, `Android.bp`, aconfig flags, secrets on added lines, tests touched, APK growth, API checks | risk report | no blocker, APK growth ≤ 10 % |
+| risk | appci: manifest, privapp allowlist, `Android.bp`, aconfig flags, secrets on added lines, tests touched, APK growth, API checks | risk report (HTML, Markdown), API check log | no blocker, APK growth ≤ 10 % (review items reported, gated only with `max_review_items`) |
 | lint | Android Lint through Soong (`m <module>-lint`, a target Soong generates per module; the report file itself on trees before 2024) | lint HTML/XML | no new error |
 | checkstyle | `prebuilts/checkstyle` with `android-style.xml` | XML, HTML | no new error |
 | ktlint | `prebuilts/ktlint` with the AOSP `.editorconfig` | XML, HTML | never blocks |
 | detekt | Detekt CLI with `config/detekt.yml` and a per-app baseline | SARIF, HTML | no new error |
 | unit_test | `atest` Robolectric and host suites selected by impact, with JaCoCo | JUnit, HTML, JaCoCo | no failure |
 | device_test | emulator, MR build installed over the system app, `atest` instrumented suites | JUnit, HTML, JaCoCo | no failure |
-| coverage | line-level merge of all suites | HTML, Cobertura | ≥ 50 % of changed lines (from 10 changed lines) |
+| coverage | line-level merge of all suites | HTML, Cobertura, Sonar coverage XML, list of uncovered new lines | ≥ 50 % of changed lines (from 10 changed lines) |
 | docs | Javadoc with the PlantUML doclet, Dokka for Kotlin | HTML, SVG | none |
 | sonar | sonar-scanner with classes, classpath, findings, coverage | Sonar project | none |
 | deploy | `m` per variant, `aapt2`, generated `Android.bp` and allowlist, MR in the prebuilts repository | commit message, delivered files | release tags only |
@@ -146,6 +146,8 @@ time); appci also locks the workspace and each `OUT_DIR`. Each job uploads only 
 
 Statuses: passed, warning (findings or *not run*, gate OK), failed (gate), error (tool or
 infrastructure), skipped (not needed, or a required stage failed).
+
+Every setting of every stage, with its default, is listed in the admin guide (3.1).
 
 ## 6. Change detection and gates
 
