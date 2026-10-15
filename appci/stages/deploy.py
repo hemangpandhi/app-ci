@@ -3,7 +3,7 @@ privileged-permission allowlist, version data and checksums, committed to a preb
 (merge request or direct push) with a commit message describing the source changes.
 
 Runs on release tags (GitLab job `deploy`), or by hand: `appci run --app <path> --stages deploy`.
-Layout in the prebuilts repository (deploy.path, default "{name}"):
+Layout in the prebuilts repository (deploy.path, default "{name}"; also {slug}, {app}, {platform}):
 
     CarSettings/
       Android.bp                      android_app_import; user / userdebug APK chosen by `debuggable`
@@ -445,7 +445,8 @@ class DeployStage(Stage):
         delivery = Delivery(ctx, scfg, log)
         try:
             repo = delivery.checkout()
-            folder_rel = (scfg.get("path") or "{name}").format(name=name, slug=p.slug, app=p.path)
+            folder_rel = (scfg.get("path") or "{name}").format(name=name, slug=p.slug, app=p.path,
+                                                               platform=ctx.cfg.get("platform") or "")
             dest = repo / folder_rel
             perm_changes: Dict[str, Dict[str, List[str]]] = {}
             header = f"{name} {version} from {p.path}@{util.capture(['git', 'rev-parse', 'HEAD'], cwd=ctx.app_abs()).strip()[:12]}"

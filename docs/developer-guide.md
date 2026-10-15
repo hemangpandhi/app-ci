@@ -184,6 +184,14 @@ build after a sync recompiles more. Later jobs in the pipeline are faster.
 **Can I see Sonar results?** On the default branch, in SonarQube project `aaos-<app>` (e.g.
 `aaos-car-settings`).
 
+**My branch is built for several platforms.** The MR then shows one child pipeline per platform,
+each with its own dashboard; every one of them has to pass. The checks and gates are the same,
+only the tree, the lunch targets and the JDK differ.
+
+**Do I have to add a lint module to `Android.bp`?** No. `<module>-lint` is a target Soong
+generates for every app and library module; the `lint` job just asks for it. Only
+`lint: { enabled: false }` in a module turns the report off.
+
 **Where are the docs?** The `docs` job (manual on MRs, automatic on the default branch) builds
 Javadoc, class diagrams and Kotlin API docs; on the default branch they are published to GitLab
 Pages with the dashboard.

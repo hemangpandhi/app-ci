@@ -132,7 +132,7 @@ time); appci also locks the workspace and each `OUT_DIR`. Each job uploads only 
 | preupload | AOSP repohooks on the MR's commits (Python 3.9+; a pinned standalone CPython and lxml wheel when the image has none) | hook log, findings | no failed hook |
 | build | `m <apps> <tests> jacocoagent jacoco-cli` on the userdebug target, `m <apps>` on the user target | build logs, `<Module>-debug.apk` and `<Module>-release.apk` | both builds succeed |
 | risk | appci: manifest, privapp allowlist, `Android.bp`, aconfig flags, secrets on added lines, tests touched, APK growth, API checks | risk report | no blocker, APK growth ≤ 10 % |
-| lint | Android Lint through Soong (`m <module>-lint`) | lint HTML/XML | no new error |
+| lint | Android Lint through Soong (`m <module>-lint`, a target Soong generates per module; the report file itself on trees before 2024) | lint HTML/XML | no new error |
 | checkstyle | `prebuilts/checkstyle` with `android-style.xml` | XML, HTML | no new error |
 | ktlint | `prebuilts/ktlint` with the AOSP `.editorconfig` | XML, HTML | never blocks |
 | detekt | Detekt CLI with `config/detekt.yml` and a per-app baseline | SARIF, HTML | no new error |

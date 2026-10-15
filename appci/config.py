@@ -174,6 +174,8 @@ DEFAULTS: Dict[str, Any] = {
         "image": {"target": "emulator", "timeout": 6 * 3600},
         # Prebuilt delivery (release tags): see appci/stages/deploy.py. variants: folder -> target
         # ("release" = the device lunch target as -user, OUT_DIR out_user, unless targets.release is set).
+        # path: folder in that repository; placeholders {name}, {slug}, {app}, {platform} (e.g.
+        # "{platform}/{name}" when several platforms deliver into one repository).
         "deploy": {"repo": None, "branch": "main", "path": "{name}",
                    "variants": {"user": "release", "userdebug": "device"},
                    "mode": "mr",                         # mr | push | local (commit only, for testing)

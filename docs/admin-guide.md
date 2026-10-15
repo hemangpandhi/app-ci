@@ -169,6 +169,9 @@ In the app project: *Settings > Merge requests > Pipelines must succeed*; *Setti
 General pipelines > Timeout* at least 3 h; *Settings > Repository > Protected tags*: `v*`
 (needed for prebuilt delivery).
 
+This runs the branch against one platform. An app whose branch is shared by several platforms
+triggers one child pipeline per platform instead (4.2).
+
 ### 2.7 First pipeline
 
 Open a small MR. The first job copies `.repo` from the image (15–30 min), syncs and builds the
@@ -197,12 +200,12 @@ for workspace, emulator and deploy settings → `--set key=value`.
 | `discovery.extra_prod_types` | vendor module types (`soong_config_module_type`, e.g. `xxx_car_app`) treated like `android_app`; when nothing under an app path counts as production code, the job log lists what Soong recorded there and why it was skipped |
 | `stages.default` | stages run by `appci run` without `--stages` |
 | `stages.<stage>.gate` | `max_*` / `min_*` limits; `new_*` metrics count only changed lines |
+| `stages.build` | `variants` (APK suffix → target; default `{debug: device, release: release}`: every build job delivers `<Module>-debug.apk` from the userdebug target and `<Module>-release.apk` from the user target, each in its own `OUT_DIR`), `include_tests`, `extra_modules`, `timeout` |
 | `stages.preupload` | `skip_hooks`, `python`, `python_modules` |
 | `stages.unit_test`, `stages.device_test` | `atest_args`, `timeout`; device: `mode` (`emulator`, `device`), `missing_image` (`warn`, `error`) |
 | `stages.coverage` | `min_new_lines_for_gate` (10) and the gate |
-| `stages.build` | `variants` (APK suffix → target; default `{debug: device, release: release}`: every build job delivers `<Module>-debug.apk` from the userdebug target and `<Module>-release.apk` from the user target, each in its own `OUT_DIR`), `include_tests`, `extra_modules`, `timeout` |
 | `stages.sonar` | `project_key_prefix`, `project_key_suffix`, `pull_request_analysis` |
-| `stages.deploy` | section 5 |
+| `stages.deploy` | section 5; `path` placeholders `{name}`, `{slug}`, `{app}`, `{platform}` |
 | `emulator` | `image` and `program` `{url, pattern}`, `require_checksum` |
 | `discovery.scan_roots` | where `appci discover --scan` looks for apps |
 | `gitlab` | `appci_project`, `appci_version`, `volume`, `build_tags`, `emulator_tags`, `timeouts`, `allow_failure` |
@@ -278,6 +281,11 @@ apps:
   from module-info.json and Android.bp where Soong's dependency file leaves them out, and no
   `<module>-lint` target (the lint report file is built directly), JDK 17 when `java_home`
   is missing.
+* Nothing lint-specific is declared in an app's `Android.bp`. `<module>-lint` is a phony target
+  Soong generates for every `android_app` / `android_library` module (since January 2024); the
+  lint stage asks for it and, when the tree is older, for the report file itself. The only app
+  side setting that matters is `lint: { enabled: false }` in a module, which removes the report
+  rule; the stage then reports `no lint rule for <module>`.
 
 ### 4.1 Tree baked into the image (no runner volume)
 
@@ -326,6 +334,73 @@ If the image carries only `.repo` (no checked-out tree) and you do not want a vo
 image's objects without copying them, which removes the copy from every job; the checkout and a
 cold build remain.
 
+### 4.2 One app branch for several platforms
+
+When one branch of an app project is built for several platforms, the pipeline has to run once
+per platform from the same commit. The platform section in `appci.yaml` is the only "flavor"
+there is: it carries the lunch targets, the JDK, the prebuilts repository and the Sonar key
+suffix. No further variable or flavor is defined in appci; the fan-out is done in GitLab, in the
+app project's `.gitlab-ci.yml`, with one child pipeline per platform:
+
+```yaml
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
+      when: never
+    - if: $CI_COMMIT_BRANCH
+    - if: $CI_COMMIT_TAG
+
+stages: [platforms]
+
+.platform:
+  stage: platforms
+  trigger:
+    include:
+      - project: 'tools/aosp-app-ci'
+        ref: v1.0.0
+        file: '/ci/gitlab/app-pipeline.yml'
+    strategy: depend                 # the trigger job takes the child pipeline's status
+  variables:
+    APPCI_APP: vendor/xxx/xxxCarSettings
+    APPCI_VERSION: v1.0.0
+
+a12:
+  extends: .platform
+  variables: {APPCI_PLATFORM: a12, APPCI_IMAGE: platforms/a12:latest}
+
+a15:
+  extends: .platform
+  variables: {APPCI_PLATFORM: a15, APPCI_IMAGE: platforms/a15:latest}
+```
+
+Each child is the normal appci pipeline for one platform: its jobs run on the `appci-a12` /
+`appci-a15` runners, in that platform's workspace and resource group, with that platform's
+settings. The template accepts `parent_pipeline` as a pipeline source, so the children need no
+change.
+
+On a merge request:
+
+* The MR shows one parent pipeline with a child per platform. With `strategy: depend` a failed
+  gate on any platform fails its trigger job, and the MR is blocked.
+* GitLab forwards the `CI_MERGE_REQUEST_*` variables to the child jobs, so change detection,
+  impact selection and the gates on changed lines work in each child as in a single-platform
+  pipeline.
+* Each child has its own `report` job and dashboard (job artifact *appci dashboard*). The MR
+  widgets for code quality and test results are filled from child pipelines on GitLab 18.6 and
+  later; on older versions the pipeline status and the dashboards are there, the inline widgets
+  are not.
+* On a release tag every child runs `deploy` with its platform's `stages.deploy` settings: one
+  prebuilts merge request per platform. When platforms share one prebuilts repository, give each
+  its own folder with `path: "{platform}/{name}"` (placeholders `{name}`, `{slug}`, `{app}`,
+  `{platform}`).
+
+Use `parallel: matrix` only if you accept one shared report job: every appci job writes its
+reports under the fixed slug `reports/app/`, so matrix instances overwrite each other's
+artifacts, and matrix jobs need literal matrix values in every `needs` entry, which the
+generated template cannot provide per platform. Child pipelines keep each platform apart without
+any of that.
+
 ## 5. Prebuilt delivery
 
 For apps that products take as prebuilts. On a release tag (e.g. `v1.2.0`), after every other
@@ -348,7 +423,7 @@ stages:
   deploy:
     repo: https://gitlab.example.com/prebuilts/apps.git
     branch: main
-    path: "{name}"            # folder per app: CarSettings/, ...
+    path: "{name}"            # folder per app: CarSettings/, ...; "{platform}/{name}" when platforms share the repo
     mode: mr                  # mr or push
     certificate: platform     # or presigned: true
     author_name: CI Bot
@@ -467,6 +542,8 @@ What you decide:
 | `no deploy token ... not a protected tag` | Protect tags `v*` (section 5). |
 | Docker does not start after a reboot | The large disk is not mounted: `findmnt /srv`. |
 | Sonar job skipped | `SONAR_HOST_URL` / `SONAR_TOKEN` not set. |
+| lint: `no lint rule for <module>` | The module has `lint: { enabled: false }` in `Android.bp`, so Soong builds no report for it. Nothing needs to be declared for lint otherwise: `<module>-lint` is generated by Soong. Limit the modules with `stages.lint.modules`. |
+| An app shared by several platforms runs on one platform only | `.gitlab-ci.yml` sets one `APPCI_PLATFORM`; trigger a child pipeline per platform (4.2). |
 
 Every job log starts with the appci version, Python, git and uid, prints a progress line every
 minute during long steps, and ends with metrics, gate results and findings. The dashboard links
