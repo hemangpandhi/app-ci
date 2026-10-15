@@ -118,6 +118,9 @@ xdg-open out/appci/latest/index.html                # the same dashboard as in C
   a git `pre-push` hook.
 * `$A impact --app $APP` shows which tests your change selects and why.
 * `$A discover --app $APP` shows the modules and test suites appci finds for the app.
+* The build stage produces `<Module>-debug.apk` (your tree's lunch target) and `<Module>-release.apk`
+  (the same product as `-user`, built in `out_user/`) under `out/appci/latest/<app slug>/build/apks/`.
+  `--set stages.build.variants='{debug: device}'` skips the user build when you only need the debug APK.
 
 ### Device tests on your machine
 
@@ -145,7 +148,7 @@ xdg-open out/appci/latest/index.html                # the same dashboard as in C
 | **Changed-line coverage** | Add or extend tests for the new code. The *Changes* tab marks uncovered lines in red. |
 | **Risk blocker** | *Privileged permission not in the privapp allowlist*: add it to the app's `privapp-permissions` XML. *New aconfig flag without namespace/description/bug*: complete the flag. *Secret on an added line*: remove it (if it is not a real secret, add `appci:allow-secret` in a comment on that line). *API check failed*: update the API files (`m <module>-update-current-api`, or `m update-api`). |
 | **Pre-upload hook** | Run `repo upload --dry-run` or the hook it names; usually formatting (`google-java-format`, `ktfmt`) or a commit message rule. |
-| **Build** | The job log shows the first compiler errors; `reports/app/build/` has the full log. |
+| **Build** | The job log shows the first compiler errors; `reports/app/build/` has the full log (`build.log` for the userdebug build, `build-release.log` for the user build). Both APKs are in `reports/app/build/apks/` as `<Module>-debug.apk` and `<Module>-release.apk`. |
 
 Review items in the *Change risk* section (new permissions, exported components, dependency
 changes, production code without tests, ...) never block; they tell reviewers what to look at.

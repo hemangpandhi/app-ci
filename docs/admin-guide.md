@@ -78,10 +78,17 @@ from. Section 3 lists every setting.
 platforms:
   tangorpro:
     manifest: {url: https://git.example.com/platform/manifest.git, branch: main, file: default.xml}
+    targets:
+      device:   {lunch: xxx_car-userdebug}            # userdebug: checks, tests, <Module>-debug.apk
+      release:  {lunch: xxx_car-user}                 # user: <Module>-release.apk, `user` prebuilt
+      emulator: {lunch: sdk_car_x86_64-userdebug}     # device tests
 gitlab: {appci_project: tools/aosp-app-ci, appci_version: v1.0.0}
 apps:
   - path: packages/apps/Car/Settings
 ```
+
+The three lunch targets and what each one builds are explained in 3.2; `release` can be left
+out when the user target is the device target's name with `-user`.
 
 The manifest must reach AOSP with an absolute URL (`fetch="https://android.googlesource.com/"`
 or your mirror), not `fetch=".."`; otherwise a fresh `repo sync` fails with `remote: Not Found`.
@@ -192,9 +199,9 @@ for workspace, emulator and deploy settings → `--set key=value`.
 |---|---|
 | `platforms.<name>.manifest` | `url`, `branch`, `file`, `groups`, `depth` of the platform manifest |
 | `platforms.<name>.<any key>` | overrides for that platform (targets, `java_home`, stages, apps) |
-| `targets.device` / `targets.emulator` | lunch target and `out_dir`; the emulator target builds with coverage |
+| `targets.device` / `targets.emulator` | lunch target, `out_dir`, `env`; the emulator target builds with coverage (3.2) |
 | `build_env_secrets` | secret-looking CI variables (e.g. `SECRET_PASS`) the build may see; all others are hidden from build, test and hook processes |
-| `targets.release` | the user build: `<Module>-release.apk` in every build job and the `user` prebuilt in delivery (default: device target with `-user`, `out_user`) |
+| `targets.release` | the user build: `<Module>-release.apk` in every build job and the `user` prebuilt in delivery (default: device target with `-user`, `out_user`; 3.2) |
 | `java_home` | JDK for host tools (default `prebuilts/jdk/jdk21/linux-x86`; needs 17+; when missing in the tree, the newest JDK the tree ships is used, e.g. jdk17 on Android 14) |
 | `workspace` | `path` (`/appci/{platform}`), `tree` (subdirectory holding the AOSP tree when the manifest nests it, e.g. `android`), `reference` (`/build_env`), `seed` (`copy`, `reference`, `none`), `adopt` (use a tree appci did not create, see 4.1), `sync.policy` (`if-older`, `always`, `never`), `sync.max_age_hours` (12) |
 | `discovery.extra_prod_types` | vendor module types (`soong_config_module_type`, e.g. `xxx_car_app`) treated like `android_app`; when nothing under an app path counts as production code, the job log lists what Soong recorded there and why it was skipped |
@@ -233,6 +240,63 @@ run (`--set stages.<stage>.<key>=value`). Durations are seconds. Gates are `max_
 | `image` | `target` (`emulator`); `timeout` (21600) | none | the system images in the emulator target's `OUT_DIR` (`appci image`, job `emulator_image`) |
 | `deploy` | section 5 | none | `commit message`, `delivered files` |
 
+### 3.2 Lunch targets and the debug / release APKs
+
+appci builds with up to three lunch targets, each in its own `OUT_DIR` so switching between them
+never discards Soong's analysis:
+
+| Target | Build variant | Used for | Default |
+|---|---|---|---|
+| `targets.device` | userdebug | every check: build, lint, risk, unit tests, docs, Sonar; the `<Module>-debug.apk` of each build job; the `userdebug/` prebuilt | `aosp_tangorpro_car-trunk_staging-userdebug`, `out_dir: out` |
+| `targets.release` | user | the `<Module>-release.apk` of each build job; the `user/` prebuilt in delivery | the device lunch target with `-userdebug` (or `-eng`) replaced by `-user`, `out_dir: out_user` |
+| `targets.emulator` | userdebug, coverage-instrumented | device tests and on-device coverage, the `emulator_image` job | `sdk_car_x86_64-trunk_staging-userdebug`, `out_dir: out_appci_emu` |
+
+Each target takes `lunch` (the combo as you would type it after `lunch`), `out_dir` (relative to
+the AOSP root or absolute) and `env` (extra environment variables for that target's builds, e.g.
+a vendor build flag). `targets.emulator` also has `coverage: true`, which adds
+`EMMA_INSTRUMENT` and `JAVA_COVERAGE_PATHS` for the configured apps to its builds.
+
+When the user and userdebug products have different names, or the user build needs its own
+variables, define `targets.release` explicitly; it is only derived when it is missing:
+
+```yaml
+platforms:
+  tangorpro:
+    targets:
+      device:
+        lunch: xxx_car-userdebug
+        out_dir: out
+      release:
+        lunch: xxx_car_prod-user          # a different product name for the user build
+        out_dir: out_user
+        env: {XXX_SIGNING: release}       # only this target's builds see it
+      emulator:
+        lunch: sdk_car_x86_64-userdebug
+        out_dir: out_appci_emu
+        coverage: true
+```
+
+What a build job does with them, in order:
+
+1. `m <apps> <tests> jacocoagent jacoco-cli` (plus dependent apps when a library changed) on
+   `targets.device`; the APK of every app module is copied as `<Module>-debug.apk`.
+2. `m <apps>` on `targets.release`; the APK is copied as `<Module>-release.apk`. A failure here
+   fails the job with its own log (`build-release.log`) and error list.
+3. Both land in the job artifacts under `reports/app/build/apks/`, and their sizes feed the risk
+   stage's APK-growth check.
+
+`stages.build.variants` is the map behind this (`{debug: device, release: release}`: APK suffix →
+target). Set `variants: {debug: device}` to build only the userdebug APK on merge requests, or add
+an entry such as `eng: engineering` for a further target; every entry other than the build's own
+`target` costs one more Soong build in its own `OUT_DIR`, so the first run per target is a cold
+build. On a release tag the deploy stage uses the same targets (`stages.deploy.variants`,
+`{user: release, userdebug: device}`), so the delivered prebuilts are built exactly as the APKs
+in the build job.
+
+Locally, `--device-lunch <combo>` and `--emulator-lunch <combo>` override the device and
+emulator targets without a platform section; the release target follows the device one unless
+set with `--set targets.release.lunch=<combo>`.
+
 **CI variables**
 
 | Variable | Where | Meaning |
@@ -270,6 +334,7 @@ platforms:
     manifest: {url: https://git.example.com/a12/manifest.git, branch: a12-main, file: source.xml}
     targets:
       device:   {lunch: xxx_car-userdebug}
+      release:  {lunch: xxx_car-user}                 # optional: derived from device when left out
       emulator: {lunch: sdk_car_x86_64-userdebug}
     java_home: /usr/lib/jvm/java-17-openjdk-amd64    # A12 ships JDK 11; host tools need 17+
     stages:
