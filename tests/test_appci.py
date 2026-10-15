@@ -788,7 +788,7 @@ class LintTargetFallback(unittest.TestCase):
         from appci.config import Config, DEFAULTS, deep_merge
         from appci.context import RunContext
         from appci.discovery import AppProfile
-        from appci.model import StageResult
+        from appci.model import FAILED, StageResult
         from appci.stages.lint import LintStage
         with tempfile.TemporaryDirectory() as root:
             data = deep_merge(DEFAULTS, {"aosp_root": root, "workdir": root + "/wd", "apps": []})
@@ -803,16 +803,24 @@ class LintTargetFallback(unittest.TestCase):
             def fake_m(target, modules, log, **kw):
                 calls.append(list(modules))
                 log.parent.mkdir(parents=True, exist_ok=True)
+                mode = "a" if kw.get("append") else "w"         # the real `m` appends to lint.log
                 if modules == ["XCarMediaApp-lint"]:
-                    log.write_text("FAILED: ninja: unknown target 'XCarMediaApp-lint'\n")
+                    with open(log, mode) as f:
+                        f.write("FAILED: ninja: unknown target 'XCarMediaApp-lint'\n")
+                    return util.CommandResult("m", 1, log, 0.0)
+                if fail_report:
+                    with open(log, mode) as f:
+                        f.write("FAILED: lint-report.xml\nvendor/x/apps/Media/Media/A.java:3: error: cannot find symbol\n")
                     return util.CommandResult("m", 1, log, 0.0)
                 xml = Path(root) / xml_rel
                 xml.parent.mkdir(parents=True, exist_ok=True)
                 xml.write_text('<issues format="6"><issue id="Typos" severity="Warning" message="t" '
                                'category="Typography"><location file="vendor/x/apps/Media/Media/A.java" '
                                'line="2"/></issue></issues>')
-                log.write_text("ok\n")
+                with open(log, mode) as f:
+                    f.write("ok\n")
                 return util.CommandResult("m", 0, log, 0.0)
+            fail_report = False
             res = StageResult("lint", "app")
             with mock.patch.object(tree, "m", side_effect=fake_m), \
                     mock.patch.object(tree, "lock", return_value=mock.MagicMock(__enter__=lambda s: None, __exit__=lambda s, *a: False)):
@@ -820,6 +828,17 @@ class LintTargetFallback(unittest.TestCase):
             self.assertEqual(calls, [["XCarMediaApp-lint"], [xml_rel]])
             self.assertEqual(res.metrics["warnings"], 1)
             self.assertIn("1 warnings in 1 module(s)", res.summary)
+            # The report build itself fails: the summary names that error, not the stale
+            # `unknown target 'XCarMediaApp-lint'` line from the first round of the same log.
+            fail_report, calls[:] = True, []
+            res = StageResult("lint", "app")
+            with mock.patch.object(tree, "m", side_effect=fake_m), \
+                    mock.patch.object(tree, "lock", return_value=mock.MagicMock(__enter__=lambda s: None, __exit__=lambda s, *a: False)):
+                LintStage().run(ctx, res)
+            self.assertEqual(calls, [["XCarMediaApp-lint"], [xml_rel]])
+            self.assertEqual(res.status, FAILED)
+            self.assertTrue(res.summary.startswith("FAILED: lint-report.xml"), res.summary)
+            self.assertNotIn("XCarMediaApp-lint", res.summary)
 
     def test_module_without_lint_rule_is_reported(self):
         from appci import util
@@ -837,7 +856,8 @@ class LintTargetFallback(unittest.TestCase):
 
             def fake_m(target, modules, log, **kw):
                 log.parent.mkdir(parents=True, exist_ok=True)
-                log.write_text(f"FAILED: ninja: unknown target '{modules[0]}'\n")
+                with open(log, "a" if kw.get("append") else "w") as f:     # `m` appends to lint.log
+                    f.write(f"FAILED: ninja: unknown target '{modules[0]}'\n")
                 return util.CommandResult("m", 1, log, 0.0)
             res = StageResult("lint", "app")
             with mock.patch.object(tree, "m", side_effect=fake_m), \

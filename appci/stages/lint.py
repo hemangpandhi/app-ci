@@ -24,6 +24,17 @@ def _report_xml(ctx, target: str, module: str):
     return ctx.tree.intermediates(target, p.module_paths.get(module, p.path), module) / "android_common" / "lint" / "lint-report.xml"
 
 
+def _written_after(log, offset: int) -> str:
+    """What a command appended to a shared log: the stage runs `m` several times into lint.log, and
+    a stale `unknown target '<module>-lint'` from the first round must not be read as the result of
+    a later one (it would hide the real error in the summary)."""
+    try:
+        data = log.read_bytes()
+    except OSError:
+        return ""
+    return util.strip_ansi((data[offset:] if len(data) >= offset else data).decode(errors="replace"))
+
+
 def _report_target(ctx, target: str, module: str) -> str:
     """The lint report as a ninja target (relative to the tree when the out dir is inside it)."""
     xml = _report_xml(ctx, target, module)
@@ -54,11 +65,13 @@ class LintStage(Stage):
             # phony target becomes a request for the report file; a missing report rule drops the
             # module (lint disabled for it in Android.bp).
             for attempt in range(2 * len(modules) + 1):
+                offset = log.stat().st_size if attempt and log.exists() else 0
                 cmd = ctx.tree.m(target, list(wanted.values()), log, timeout=scfg.get("timeout"),
                                  append=attempt > 0)
+                text = _written_after(log, offset)
                 if cmd.ok:
                     break
-                unknown = set(UNKNOWN_RE.findall(cmd.output()))
+                unknown = set(UNKNOWN_RE.findall(text))
                 hit = [m for m, t in wanted.items() if t in unknown]
                 if not hit:
                     break
@@ -79,8 +92,8 @@ class LintStage(Stage):
             res.summary = f"Soong has no lint rule for {', '.join(no_rule)} (lint disabled in Android.bp?)"
             return
         if not cmd.ok:
-            errs = build_error_lines(cmd.output())
-            hint = diagnose(cmd.output())
+            errs = build_error_lines(text)
+            hint = diagnose(text)
             if hint:
                 errs.insert(0, hint)
             res.status = FAILED
